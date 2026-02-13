@@ -20,18 +20,33 @@ class VMManager:
 
         # Start new container
         # Note: Using Docker for PoC, would use apple/container in production
-        subprocess.run([
-            'docker', 'run',
-            '-d',  # Detached
-            '--name', self.container_name,
-            '--privileged',  # Needed for overlay FS and iptables
-            '-v', f'{self.workspace}:/mnt/workspace:ro',  # Read-only workspace
-            '-v', f'{self.config_dir}:/mnt/config:ro',  # Config
-            'vibedom-alpine:latest'
-        ], check=True)
+        try:
+            subprocess.run([
+                'docker', 'run',
+                '-d',  # Detached
+                '--name', self.container_name,
+                '--privileged',  # Required for overlay mount syscalls and iptables rules
+                                 # WARNING: Reduces container isolation - acceptable for local dev sandbox
+                                 # TODO: Replace with specific capabilities (CAP_SYS_ADMIN, CAP_NET_ADMIN) in production
+                '-v', f'{self.workspace}:/mnt/workspace:ro',  # Read-only workspace
+                '-v', f'{self.config_dir}:/mnt/config:ro',  # Config
+                'vibedom-alpine:latest'
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to start VM container '{self.container_name}': {e}") from e
+        except FileNotFoundError:
+            raise RuntimeError("Docker command not found. Is Docker installed?") from None
 
         # Wait for VM to be ready
-        time.sleep(2)
+        for _ in range(10):
+            result = subprocess.run(
+                ['docker', 'exec', self.container_name, 'test', '-f', '/tmp/.vm-ready'],
+                capture_output=True
+            )
+            if result.returncode == 0:
+                return
+            time.sleep(1)
+        raise RuntimeError(f"VM '{self.container_name}' failed to become ready within 10 seconds")
 
     def stop(self) -> None:
         """Stop and remove the VM."""

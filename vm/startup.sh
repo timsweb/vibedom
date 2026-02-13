@@ -22,5 +22,8 @@ fi
 
 echo "VM ready!"
 
+# Signal readiness
+touch /tmp/.vm-ready
+
 # Keep container running
 tail -f /dev/null
