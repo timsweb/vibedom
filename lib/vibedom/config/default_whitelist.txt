@@ -1,0 +1,16 @@
+# External AI APIs
+api.anthropic.com
+openai.com
+
+# Package managers
+packagist.org
+registry.npmjs.org
+pypi.org
+
+# Version control
+github.com
+gitlab.com
+
+# Add your internal domains below:
+# gitlab.company.internal
+# composer.company.internal

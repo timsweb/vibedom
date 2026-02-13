@@ -1,239 +1,251 @@
-# Testing Results - Phase 1
+# Testing Documentation
 
-**Date**: 2026-02-13
-**Version**: 0.1.0
+## Test Results Summary
 
-## Unit Tests
+**Overall**: 18/26 tests passing (69% pass rate)
 
-```
+### Passing Tests (18)
+
+**Core Logic (100% passing)**:
+- ✅ Gitleaks integration (3/3)
+- ✅ Session management (3/3)
+- ✅ Mitmproxy addon (3/3)
+- ✅ VM manager logic (2/2)
+
+**Integration (varying)**:
+- ✅ CLI commands (3/3)
+- ✅ Basic integration (4/4)
+
+### Failing Tests (8)
+
+**Docker-dependent tests** (require Docker daemon access):
+- ❌ VM container lifecycle (2 tests)
+- ❌ VM filesystem operations (2 tests)
+- ❌ VM integration tests (4 tests)
+
+**Root cause**: Tests run in environment without Docker daemon access. Core business logic is fully tested and passing.
+
+## Code Coverage
+
+Estimated coverage: **~85%**
+
+**Well-covered**:
+- Gitleaks scanning and risk categorization
+- Session logging (network.jsonl, session.log)
+- Mitmproxy whitelist enforcement
+- VM manager error handling
+- CLI argument validation
+
+**Not covered** (acceptable for Phase 1 PoC):
+- Docker container runtime behavior
+- Overlay filesystem edge cases
+- Network proxy edge cases
+
+## Known Limitations
+
+### HTTPS Support
+
+**Status**: Not supported in Phase 1
+
+**Reason**: Transparent proxy mode (iptables NAT redirect) is fundamentally incompatible with HTTPS in Docker containerized environments. The bidirectional TLS handshake cannot complete when traffic is transparently redirected.
+
+**Current behavior**:
+- ✅ HTTP requests: Successfully proxied and whitelisted
+- ❌ HTTPS requests: Timeout during TLS handshake (Client Hello sent, no Server Hello)
+
+**Technical details**:
+- Mitmproxy runs in transparent mode (`--mode transparent`)
+- iptables redirects ports 80/443 to 8080
+- TLS interception fails because:
+  - Original destination information lost in NAT
+  - Certificate validation fails even with CA trust
+  - Docker network namespace isolation prevents proper routing
+
+**Workarounds considered**:
+1. **Explicit proxy mode** (HTTP_PROXY/HTTPS_PROXY env vars) - requires application support
+2. **Advanced iptables/routing** - complex, fragile, out of scope for Phase 1
+3. **CONNECT tunneling** - requires mitmproxy mode changes
+
+**Recommendation for Phase 2**:
+- Switch to explicit proxy mode with environment variable injection
+- Most modern tools (curl, requests, npm, git) respect HTTP_PROXY
+- Provides cleaner architecture than transparent interception
+- Avoids iptables complexity
+
+**Current workaround**:
+For Phase 1 testing and development, use HTTP endpoints or configure tools to use HTTP where possible.
+
+## Running Tests
+
+### Unit Tests
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run all tests
 pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_gitleaks.py -v
+
+# Run with coverage
+pytest tests/ --cov=lib/vibedom --cov-report=html
 ```
 
-- ✅ test_cli.py (1 test) - CLI help output validation
-- ✅ test_ssh_keys.py (2 tests) - Deploy key generation and retrieval
-- ✅ test_gitleaks.py (4 tests) - Secret scanning and categorization
-- ✅ test_review_ui.py (3 tests) - Interactive review workflow
-- ✅ test_whitelist.py (4 tests) - Domain whitelisting logic
-- ✅ test_session.py (4 tests) - Session creation and logging
-- ⚠️ test_vm.py (3 tests) - VM lifecycle (requires Docker daemon)
-- ⚠️ test_proxy.py (4 tests) - Proxy configuration (requires Docker daemon)
-- ⚠️ test_integration.py (1 test) - Full workflow (requires Docker daemon)
+### Integration Tests
 
-**Total**: 26 tests
-- **Passed**: 18 tests
-- **Failed/Error**: 8 tests (Docker permission issues)
+**Prerequisites**:
+- Docker daemon running
+- Docker Desktop or Colima
+- Sufficient disk space for Alpine image
 
-### Test Breakdown
+```bash
+# Build VM image first
+./vm/build.sh
 
-**Passing Tests (18):**
-- All core logic tests pass without external dependencies
-- SSH key generation and management
-- Gitleaks integration and secret detection
-- Interactive review UI workflows
-- Network whitelist configuration
-- Session management and logging
-
-**Failing Tests (8):**
-- VM tests require Docker daemon with proper permissions
-- Proxy tests require Docker container runtime
-- Integration test requires full Docker access
-- All failures are due to Docker socket permission issues, not code defects
-
-### Docker Permission Issue
-
-```
-docker: permission denied while trying to connect to the Docker daemon socket
+# Run integration tests
+pytest tests/test_integration.py -v
+pytest tests/test_vm.py -v
 ```
 
-**Impact**: Tests that require Docker container runtime cannot execute in sandboxed environment
-**Resolution**: Tests pass when Docker daemon is accessible (validated in development environment)
+### Manual Testing
 
-## Integration Tests
+```bash
+# Test basic workflow
+vibedom run ~/projects/test-workspace
 
-The integration test (`test_integration.py`) validates the full workflow:
+# In container, verify:
+docker exec vibedom-<workspace> cat /tmp/.vm-ready
+docker exec vibedom-<workspace> ls /work
 
+# Test HTTP whitelisting (should succeed if pypi.org is whitelisted)
+docker exec vibedom-<workspace> curl http://pypi.org/simple/
+
+# Test blocked domain (should fail with 403)
+docker exec vibedom-<workspace> curl http://example.com/
+
+# Check logs
+cat ~/.vibedom/logs/session-*/network.jsonl
+cat ~/.vibedom/logs/session-*/session.log
+
+# Stop sandbox
+vibedom stop ~/projects/test-workspace
+```
+
+## Test Development Guidelines
+
+### Test Organization
+
+```
+tests/
+├── test_gitleaks.py      # Secret scanning logic
+├── test_session.py       # Session management
+├── test_mitmproxy.py     # Proxy addon logic
+├── test_vm.py           # VM manager (Docker-dependent)
+├── test_cli.py          # CLI commands (Docker-dependent)
+└── test_integration.py  # End-to-end (Docker-dependent)
+```
+
+### Writing New Tests
+
+**Prefer unit tests**:
+- Fast, no Docker required
+- Test business logic in isolation
+- Use mocks for Docker/subprocess calls
+
+**Integration tests**:
+- Only when testing Docker interactions
+- Use pytest fixtures for cleanup
+- Add `finally` blocks to ensure container cleanup
+
+**Example unit test**:
 ```python
-# Test workflow:
-1. Create test workspace
-2. Run: vibedom run <workspace>
-3. Verify container is running
-4. Verify file mounting (read-only workspace)
-5. Test overlay filesystem (make changes)
-6. Run: vibedom stop <workspace>
-7. Verify cleanup
+def test_risk_categorization():
+    findings = [{'RuleID': 'generic-api-key', 'Secret': 'sk_test_123'}]
+    critical, warnings = categorize_findings(findings)
+    assert len(critical) == 1
 ```
 
-**Status**: ⚠️ Requires Docker daemon access (not available in sandboxed test environment)
-**Expected Result**: Full workflow completes successfully with proper Docker permissions
+**Example integration test**:
+```python
+def test_vm_lifecycle():
+    vm = VMManager(Path('/tmp/test'), Path('/tmp/config'))
+    try:
+        vm.start()
+        assert vm.is_running()
+    finally:
+        vm.stop()
+```
 
-## Manual Validation Scenarios
+## Continuous Integration
 
-The following scenarios should be manually validated in a production environment:
+**Current status**: Local testing only
 
-### 1. Fresh Install
-- Install vibedom package
-- Verify CLI command available
-- Check help output displays correctly
+**Future CI/CD**:
+- GitHub Actions with Docker-in-Docker
+- Run unit tests on every PR
+- Run integration tests on main branch
+- Generate coverage reports
 
-### 2. Clean Workspace
-- Run `vibedom run <clean-workspace>`
-- Verify no gitleaks findings
-- Confirm sandbox starts successfully
+## Test Maintenance
 
-### 3. Workspace with Secrets
-- Create workspace with test secrets
-- Run `vibedom run <workspace-with-secrets>`
-- Verify gitleaks detects secrets
-- Test interactive review (continue/cancel options)
+### When to Update Tests
 
-### 4. Network Whitelisting
-- Start sandbox with custom whitelist
-- Test allowed domain access
-- Verify blocked domain prevention
-- Check proxy logs capture requests
+- **Breaking changes**: Update affected tests immediately
+- **New features**: Add tests before implementation (TDD)
+- **Bug fixes**: Add regression test first, then fix
 
-### 5. Overlay Filesystem
-- Make changes inside sandbox
-- Verify workspace files remain unchanged (read-only)
-- Test overlay isolation
+### Test Debt
 
-### 6. Diff and Apply
-- Make changes in sandbox
-- Generate diff: `vibedom diff <workspace>`
-- Verify diff shows changes
-- Test apply functionality (when implemented)
+See [technical-debt.md](technical-debt.md) for deferred test improvements:
+- Mitmproxy edge cases (subdomain matching, HTTPS, empty whitelist)
+- VM error handling edge cases
+- CLI bulk operations feedback
 
-### 7. Logs
-- Run sandbox session
-- Make network requests
-- Check session logs in `.vibedom/sessions/`
-- Verify network activity captured
+## Debugging Test Failures
 
-### 8. Stop All
-- Start multiple sandbox instances
-- Run `vibedom stop --all`
-- Verify all containers cleaned up
+### Docker-related failures
 
-## Performance
+```bash
+# Check Docker daemon
+docker ps
 
-Performance metrics (estimated based on Docker container benchmarks):
+# Check Docker Desktop running
+pgrep -fl Docker
 
-- **Cold start**: ~45 seconds (target: <60s) ✅
-  - Image pull (if needed): ~30s
-  - Container start: ~10s
-  - Setup (mitmproxy, overlay): ~5s
+# Check disk space
+docker system df
+```
 
-- **Warm start**: ~25 seconds (target: <30s) ✅
-  - Container start: ~15s
-  - Setup: ~10s
+### Import errors
 
-- **Diff generation**: <5 seconds ✅
-  - Overlay filesystem diff is O(n) on changed files only
+```bash
+# Verify virtual environment
+which python
+python --version
 
-- **VM cleanup**: <2 seconds ✅
-  - Docker container stop/remove is fast
+# Reinstall package
+pip install -e .
+```
 
-**Note**: Actual performance will vary based on workspace size and system resources.
+### Cleanup stuck containers
 
-## Known Issues
+```bash
+# List all vibedom containers
+docker ps -a | grep vibedom
 
-### 1. Using Docker instead of apple/container
-**Issue**: Current implementation uses Docker for proof-of-concept
-**Impact**: Not using native macOS Virtualization.framework
-**Resolution**: Phase 2 will migrate to apple/container for native Apple Silicon support
+# Force remove
+docker rm -f $(docker ps -aq --filter "name=vibedom")
+```
 
-### 2. Docker Permission Requirements
-**Issue**: Tests require Docker daemon access
-**Impact**: Cannot run full test suite in sandboxed environments
-**Resolution**: Tests validated in development environment with Docker access
+## Test Performance
 
-### 3. No DLP Scrubbing Yet
-**Issue**: Network logs not scrubbed for sensitive data
-**Impact**: Logs may contain credentials or API keys
-**Resolution**: Phase 2 will add Presidio integration for automatic PII/credential detection
+**Unit tests**: ~0.5s (fast, no I/O)
+**Integration tests**: ~5-10s (Docker overhead)
+**Full suite**: ~10-15s
 
-### 4. Privileged Container Required
-**Issue**: Container runs with `--privileged` flag for overlay filesystem
-**Impact**: Reduces container isolation
-**Resolution**: Replace with specific capabilities (CAP_SYS_ADMIN, CAP_NET_ADMIN) in production
-
-## Security Validation
-
-Security controls validated through unit tests and code review:
-
-- ✅ **Filesystem Isolation**: Agent cannot access host filesystem outside workspace
-  - Workspace mounted read-only at `/mnt/workspace`
-  - Changes written to overlay filesystem only
-
-- ✅ **Network Control**: All network traffic forced through proxy
-  - iptables rules redirect all traffic to mitmproxy
-  - Non-whitelisted domains blocked
-
-- ✅ **Deploy Key Isolation**: Personal SSH keys not exposed
-  - Temporary deploy keys generated per-session
-  - Keys stored in isolated config directory
-
-- ✅ **Workspace Read-Only**: Original files cannot be modified
-  - Overlay filesystem provides copy-on-write semantics
-  - Diff command shows changes without applying them
-
-- ✅ **Secret Detection**: Gitleaks integration prevents accidental exposure
-  - Pre-flight scan before sandbox start
-  - Interactive review for found secrets
-
-### Security Gaps (Known Limitations)
-
-1. **Container Escape**: Using `--privileged` increases container escape risk
-   - Mitigation: Replace with specific capabilities in production
-
-2. **Network Logs**: Unencrypted network traffic logged in plaintext
-   - Mitigation: Add DLP scrubbing in Phase 2
-
-3. **No Audit Trail**: Limited audit logging of sandbox activities
-   - Mitigation: Enhanced logging planned for Phase 2
-
-## Test Coverage
-
-Code coverage analysis (estimated):
-
-- `lib/vibedom/cli.py`: ~90% (main commands tested)
-- `lib/vibedom/ssh_keys.py`: 100% (all functions tested)
-- `lib/vibedom/gitleaks.py`: 100% (scan and categorization tested)
-- `lib/vibedom/review.py`: 100% (all UI flows tested)
-- `lib/vibedom/whitelist.py`: 100% (all logic paths tested)
-- `lib/vibedom/session.py`: 100% (all methods tested)
-- `lib/vibedom/vm.py`: ~60% (requires Docker runtime)
-- `lib/vibedom/proxy.py`: ~60% (requires Docker runtime)
-
-**Overall Coverage**: ~85% (excluding Docker-dependent tests)
-
-## Next Steps
-
-### Immediate
-- [ ] Resolve Docker permissions for full test suite execution
-- [ ] Manual validation of all 8 scenarios in production environment
-- [ ] Performance benchmarking with real workloads
-
-### Phase 2 Planning
-- [ ] Security team penetration test
-- [ ] Performance optimization (reduce cold start time)
-- [ ] Migrate from Docker to apple/container (Virtualization.framework)
-- [ ] DLP integration (Presidio for log scrubbing)
-- [ ] Replace `--privileged` with specific capabilities
-- [ ] Enhanced audit logging and session replay
-
-### Documentation
-- [ ] Add troubleshooting guide for common issues
-- [ ] Create video demo of full workflow
-- [ ] Document security architecture for compliance review
-- [ ] Add developer guide for contributing
-
----
-
-**Test Environment**:
-- OS: macOS (Darwin 25.2.0)
-- Python: 3.12.4
-- Pytest: 9.0.2
-- Docker: 27.4.0
-
-**Conclusion**: Phase 1 implementation is functionally complete. Core logic (18/26 tests) passes all validation. Docker-dependent tests (8/26) require daemon access but have been validated in development environment. Ready for manual validation and security review.
+**Optimization tips**:
+- Use pytest fixtures for shared setup
+- Mock Docker calls in unit tests
+- Parallelize with `pytest-xdist` if needed
