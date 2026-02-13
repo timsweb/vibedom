@@ -22,17 +22,36 @@ Before starting, verify:
 
 ## Task 1: Project Scaffolding
 
-**Goal:** Set up the basic project structure with CLI framework.
+**Goal:** Set up the basic project structure with CLI framework using a Python virtual environment.
 
 **Files:**
-- Create: `vibedom` (CLI entry point)
+- Create: `.python-version`
 - Create: `lib/vibedom/__init__.py`
 - Create: `lib/vibedom/cli.py`
 - Create: `tests/test_cli.py`
 - Create: `pyproject.toml`
 - Create: `.gitignore`
 
-**Step 1: Write the failing test**
+**Step 1: Create Python virtual environment**
+
+Run:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Expected: Virtual environment created and activated. Prompt should show `(.venv)`
+
+**Step 2: Create .python-version file**
+
+Create `.python-version`:
+```
+3.11
+```
+
+This helps tools like `pyenv` auto-activate the right Python version.
+
+**Step 3: Write the failing test**
 
 Create `tests/test_cli.py`:
 
@@ -130,6 +149,7 @@ if __name__ == '__main__':
 Create `.gitignore`:
 
 ```
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -140,27 +160,45 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# macOS
 .DS_Store
+
+# Vibedom
 .vibedom/
 ```
 
-**Step 4: Install package in development mode**
+**Step 5: Install package in development mode**
 
-Run: `pip install -e .`
+Run:
+```bash
+# Make sure venv is activated
+source .venv/bin/activate
+pip install -e .
+```
 
-Expected: Package installs successfully
+Expected: Package installs successfully into virtual environment
 
-**Step 5: Run test to verify it passes**
+**Step 6: Run test to verify it passes**
 
 Run: `pytest tests/test_cli.py::test_cli_shows_help -v`
 
 Expected: PASS
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 ```bash
-git add pyproject.toml lib/ tests/ .gitignore
-git commit -m "feat: add CLI scaffolding with basic commands"
+git add .python-version pyproject.toml lib/ tests/ .gitignore
+git commit -m "feat: add CLI scaffolding with basic commands
+
+- Set up Python virtual environment
+- Create Click-based CLI with init/run/stop commands
+- Add basic project structure and dependencies"
 ```
 
 ---
@@ -1885,6 +1923,10 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 ## Quick Start
 
 ```bash
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
 # Install
 pip install -e .
 
@@ -1937,6 +1979,9 @@ Session logs are saved to `~/.vibedom/logs/session-YYYYMMDD-HHMMSS/`:
 ## Development
 
 ```bash
+# Activate virtual environment
+source .venv/bin/activate
+
 # Run tests
 pytest tests/ -v
 
@@ -2012,21 +2057,27 @@ Create `docs/USAGE.md`:
 
 ## First-Time Setup
 
-1. Install vibedom:
+1. Set up virtual environment:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install vibedom:
    ```bash
    pip install -e .
    ```
 
-2. Initialize:
+3. Initialize:
    ```bash
    vibedom init
    ```
 
-3. Add the displayed SSH public key to your GitLab account:
+4. Add the displayed SSH public key to your GitLab account:
    - GitLab → Settings → SSH Keys
    - Paste the key shown by `vibedom init`
 
-4. Edit `~/.vibedom/trusted_domains.txt` to add your internal domains
+5. Edit `~/.vibedom/trusted_domains.txt` to add your internal domains
 
 ## Running a Sandbox
 
