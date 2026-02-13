@@ -4,6 +4,8 @@
 import click
 from pathlib import Path
 from vibedom.ssh_keys import generate_deploy_key, get_public_key
+from vibedom.gitleaks import scan_workspace
+from vibedom.review_ui import review_findings
 
 @click.group()
 @click.version_option()
@@ -45,7 +47,20 @@ def init():
 @click.argument('workspace', type=click.Path(exists=True))
 def run(workspace):
     """Run AI agent in sandboxed environment."""
-    click.echo(f"Starting sandbox for {workspace}...")
+    workspace_path = Path(workspace).resolve()
+
+    click.echo(f"🔍 Pre-flight scan: {workspace_path}")
+
+    # Run Gitleaks
+    findings = scan_workspace(workspace_path)
+
+    # Review findings
+    if not review_findings(findings):
+        click.secho("❌ Cancelled by user", fg='red')
+        raise click.Abort()
+
+    click.echo("✅ Pre-flight complete")
+    click.echo(f"🚀 Starting sandbox for {workspace_path}...")
 
 @main.command()
 def stop():

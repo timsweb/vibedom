@@ -1,0 +1,27 @@
+title = "Vibedom Gitleaks Config"
+
+[allowlist]
+description = "Global allowlist for common false positives"
+paths = [
+    '''node_modules/''',
+    '''vendor/''',
+    '''.git/''',
+]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey)['":\s]*[=:]\s*['"]?[a-z0-9_-]{20,}['"]?'''
+tags = ["key", "API"]
+
+[[rules]]
+id = "gitlab-token"
+description = "GitLab Personal Access Token"
+regex = '''glpat-[A-Za-z0-9_-]{20,}'''
+tags = ["gitlab", "token"]
+
+[[rules]]
+id = "database-password"
+description = "Database Password"
+regex = '''(?i)(db[_-]?password|database[_-]?password)['":\s]*[=:]\s*['"]?[^'"\s]+['"]?'''
+tags = ["database", "password"]
