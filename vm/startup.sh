@@ -5,12 +5,11 @@ echo "Starting vibedom VM..."
 
 # Setup overlay filesystem
 echo "Setting up overlay filesystem..."
-# Note: overlay mount doesn't work well in Docker Desktop on macOS
-# Use cp -a to copy workspace to /work (which is writable)
-# This simulates overlay behavior for the PoC
-if [ -d /mnt/workspace ] && [ "$(ls -A /mnt/workspace 2>/dev/null)" ]; then
-    cp -a /mnt/workspace/. /work/
-fi
+# Create tmpfs for overlay upper/work dirs (overlay doesn't support itself as upperdir)
+mkdir -p /overlay
+mount -t tmpfs tmpfs /overlay
+mkdir -p /overlay/upper /overlay/work
+mount -t overlay overlay -o lowerdir=/mnt/workspace,upperdir=/overlay/upper,workdir=/overlay/work /work
 
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
