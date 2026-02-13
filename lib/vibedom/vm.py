@@ -87,7 +87,7 @@ class VMManager:
             Unified diff as string
         """
         result = self.exec([
-            'diff', '-ur', '/mnt/workspace', '/work'
+            'sh', '-c', 'cd / && diff -ur mnt/workspace work'
         ])
         # diff returns exit code 1 when there are differences
         return result.stdout
