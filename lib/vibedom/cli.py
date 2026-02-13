@@ -2,6 +2,8 @@
 """vibedom CLI - Secure AI agent sandbox."""
 
 import sys
+import subprocess
+import tempfile
 import click
 from pathlib import Path
 from vibedom.ssh_keys import generate_deploy_key, get_public_key
@@ -58,6 +60,9 @@ def init():
 def run(workspace):
     """Run AI agent in sandboxed environment."""
     workspace_path = Path(workspace).resolve()
+    if not workspace_path.is_dir():
+        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
+        sys.exit(1)
     config_dir = Path.home() / '.vibedom'
     logs_dir = config_dir / 'logs'
 
@@ -96,8 +101,14 @@ def run(workspace):
         click.echo("To stop: vibedom stop")
         click.echo("To inspect: docker exec -it vibedom-{} sh".format(workspace_path.name))
 
+        session.finalize()
+
     except Exception as e:
         session.log_event(f'Error: {e}', level='ERROR')
+        try:
+            vm.stop()  # Clean up any partial container
+        except:
+            pass  # Best effort cleanup
         session.finalize()
         click.secho(f"❌ Error: {e}", fg='red')
         sys.exit(1)
@@ -108,10 +119,8 @@ def stop(workspace):
     """Stop running sandbox session."""
     if workspace:
         workspace_path = Path(workspace).resolve()
-        container_name = f"vibedom-{workspace_path.name}"
     else:
         # Stop all vibedom containers
-        import subprocess
         result = subprocess.run([
             'docker', 'ps', '-a', '--filter', 'name=vibedom-', '--format', '{{.Names}}'
         ], capture_output=True, text=True)
@@ -121,11 +130,18 @@ def stop(workspace):
             click.echo("No running sandboxes found")
             return
 
+        failed = []
         for container in containers:
             click.echo(f"Stopping {container}...")
-            subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+            result = subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+            if result.returncode != 0:
+                failed.append(container)
+                click.secho(f"  Warning: Failed to stop {container}", fg='yellow')
 
-        click.echo("✅ All sandboxes stopped")
+        if failed:
+            click.secho(f"⚠️  Failed to stop {len(failed)} container(s): {', '.join(failed)}", fg='yellow')
+        else:
+            click.echo("✅ All sandboxes stopped")
         return
 
     # Stop specific container
@@ -149,9 +165,6 @@ def stop(workspace):
 
         if apply:
             # Apply patch
-            import subprocess
-            import tempfile
-
             with tempfile.NamedTemporaryFile(mode='w', suffix='.patch', delete=False) as f:
                 f.write(diff)
                 patch_file = f.name
@@ -164,6 +177,9 @@ def stop(workspace):
                 click.echo("✅ Changes applied")
             except subprocess.CalledProcessError as e:
                 click.secho(f"❌ Failed to apply patch: {e}", fg='red')
+                click.echo(f"   Workspace: {workspace_path}")
+                click.echo(f"   Patch file: {patch_file}")
+                click.echo("   Tip: Check file permissions and workspace directory")
             finally:
                 Path(patch_file).unlink()
     else:
