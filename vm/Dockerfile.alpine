@@ -12,6 +12,8 @@ RUN apk add --no-cache \
     sudo \
     rsync \
     diffutils \
+    ca-certificates \
+    ca-certificates-bundle \
     mitmproxy
 
 # Create directories

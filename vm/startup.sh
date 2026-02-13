@@ -32,6 +32,21 @@ mitmdump \
     -s /mnt/config/mitmproxy_addon.py \
     > /var/log/vibedom/mitmproxy.log 2>&1 &
 
+# Wait for mitmproxy to generate certificate
+sleep 2
+
+# Install mitmproxy CA certificate
+echo "Installing mitmproxy CA certificate..."
+if [ -f /tmp/mitmproxy/mitmproxy-ca-cert.pem ]; then
+    cp /tmp/mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+    update-ca-certificates
+
+    # Also set environment variables for tools that don't use system certs
+    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+fi
+
 # Signal readiness
 touch /tmp/.vm-ready
 
