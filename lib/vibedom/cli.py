@@ -6,6 +6,7 @@ from pathlib import Path
 from vibedom.ssh_keys import generate_deploy_key, get_public_key
 from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
+from vibedom.whitelist import create_default_whitelist
 
 @click.group()
 @click.version_option()
@@ -41,7 +42,13 @@ def init():
     click.echo(pubkey)
     click.echo("="*60 + "\n")
 
-    click.echo("✅ Initialization complete!")
+    # Create whitelist
+    click.echo("Creating network whitelist...")
+    whitelist_path = create_default_whitelist(config_dir)
+    click.echo(f"✓ Whitelist created at {whitelist_path}")
+    click.echo(f"  Edit this file to add your internal domains")
+
+    click.echo("\n✅ Initialization complete!")
 
 @main.command()
 @click.argument('workspace', type=click.Path(exists=True))
