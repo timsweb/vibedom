@@ -1,5 +1,6 @@
 """VM lifecycle management."""
 
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -17,6 +18,11 @@ class VMManager:
         """Start the VM with workspace mounted."""
         # Stop existing container if any
         self.stop()
+
+        # Copy mitmproxy addon to config dir
+        addon_src = Path(__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
+        addon_dst = self.config_dir / 'mitmproxy_addon.py'
+        shutil.copy(addon_src, addon_dst)
 
         # Start new container
         # Note: Using Docker for PoC, would use apple/container in production

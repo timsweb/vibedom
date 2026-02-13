@@ -7,15 +7,15 @@ RUN apk add --no-cache \
     git \
     python3 \
     py3-pip \
-    mitmproxy \
     iptables \
     curl \
     sudo \
     rsync \
-    diffutils
+    diffutils \
+    mitmproxy
 
-# Create workspace mount point
-RUN mkdir -p /mnt/workspace /work /mnt/config
+# Create directories
+RUN mkdir -p /mnt/workspace /work /mnt/config /var/log/vibedom
 
 # Add startup script
 COPY startup.sh /usr/local/bin/

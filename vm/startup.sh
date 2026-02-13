@@ -14,16 +14,28 @@ mount -t overlay overlay -o lowerdir=/mnt/workspace,upperdir=/overlay/upper,work
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
     eval $(ssh-agent -s)
-    ssh-add /mnt/config/id_ed25519_vibedom
+    ssh-add /mnt/config/id_ed25519_vibedom 2>/dev/null || true
 fi
 
-# Start mitmproxy in background (will be configured in later task)
-# mitmproxy --mode transparent --listen-port 8080 &
+# Setup iptables to redirect all HTTP/HTTPS to mitmproxy
+echo "Configuring network interception..."
+iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 8080
 
-echo "VM ready!"
+# Start mitmproxy (using mitmdump for non-interactive mode)
+echo "Starting mitmproxy..."
+mkdir -p /var/log/vibedom
+mitmdump \
+    --mode transparent \
+    --listen-port 8080 \
+    --set confdir=/tmp/mitmproxy \
+    -s /mnt/config/mitmproxy_addon.py \
+    > /var/log/vibedom/mitmproxy.log 2>&1 &
 
 # Signal readiness
 touch /tmp/.vm-ready
+
+echo "VM ready!"
 
 # Keep container running
 tail -f /dev/null
