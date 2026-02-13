@@ -11,12 +11,21 @@ def generate_deploy_key(key_path: Path) -> None:
     """
     key_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Get hostname for key comment
+    hostname_result = subprocess.run(
+        ["hostname"],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    hostname = hostname_result.stdout.strip()
+
     subprocess.run([
         'ssh-keygen',
         '-t', 'ed25519',
         '-f', str(key_path),
         '-N', '',  # No passphrase
-        '-C', f'vibedom@{subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()}'
+        '-C', f'vibedom@{hostname}'
     ], check=True, capture_output=True)
 
 def get_public_key(key_path: Path) -> str:
