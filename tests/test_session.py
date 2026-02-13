@@ -49,3 +49,13 @@ def test_session_log_event():
         content = log_file.read_text()
         assert 'VM started' in content
         assert 'Pre-flight scan complete' in content
+
+def test_session_finalize():
+    """Should log session end event."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session = Session(Path('/tmp/test'), Path(tmpdir))
+        session.finalize()
+
+        log_file = session.session_dir / 'session.log'
+        content = log_file.read_text()
+        assert 'Session ended' in content

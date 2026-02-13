@@ -17,8 +17,8 @@ class Session:
         """
         self.workspace = workspace
 
-        # Create session directory with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        # Create session directory with timestamp (including microseconds for uniqueness)
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
         self.session_dir = logs_base_dir / f'session-{timestamp}'
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -52,8 +52,13 @@ class Session:
             'reason': reason
         }
 
-        with open(self.network_log, 'a') as f:
-            f.write(json.dumps(entry) + '\n')
+        try:
+            with open(self.network_log, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+        except (IOError, OSError) as e:
+            # Don't crash the session - log to stderr
+            import sys
+            print(f"Warning: Failed to log network request: {e}", file=sys.stderr)
 
     def log_event(self, message: str, level: str = 'INFO') -> None:
         """Log an event to session log.
@@ -65,8 +70,13 @@ class Session:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         entry = f'[{timestamp}] {level}: {message}\n'
 
-        with open(self.session_log, 'a') as f:
-            f.write(entry)
+        try:
+            with open(self.session_log, 'a') as f:
+                f.write(entry)
+        except (IOError, OSError) as e:
+            # Don't crash the session - log to stderr
+            import sys
+            print(f"Warning: Failed to log event: {e}", file=sys.stderr)
 
     def finalize(self) -> None:
         """Finalize the session (called at end)."""
