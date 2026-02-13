@@ -230,6 +230,89 @@ entry = {
 
 ---
 
+## Task 8: Run Command Integration - Deferred Improvements
+
+**Status:** Deferred to Phase 2 or later
+**Created:** 2026-02-13
+**Priority:** Low
+
+### 1. Hardcoded Magic Number (Low Priority)
+
+**Issue:** Diff preview limit hardcoded as 2000.
+
+**Location:** `lib/vibedom/cli.py` line 143
+
+**Current:**
+```python
+click.echo(diff[:2000])  # Show first 2000 chars
+```
+
+**Recommendation:**
+```python
+DIFF_PREVIEW_LIMIT = 2000
+# ... later:
+click.echo(diff[:DIFF_PREVIEW_LIMIT])
+```
+
+**Impact:** Minor code readability improvement.
+
+**Estimated Effort:** 2 minutes
+
+---
+
+### 2. Inconsistent Container Status Messages (Low Priority)
+
+**Issue:** "Stop all" path doesn't show individual container success confirmations.
+
+**Location:** `lib/vibedom/cli.py` lines 113-144
+
+**Recommendation:** Add per-container success/failure indicators for better UX.
+
+**Impact:** Improved user feedback during bulk operations.
+
+**Estimated Effort:** 5 minutes
+
+---
+
+### 3. Missing Type Hints (Low Priority)
+
+**Issue:** CLI functions lack type hints despite codebase using them elsewhere.
+
+**Location:** `lib/vibedom/cli.py` run() and stop() functions
+
+**Recommendation:**
+```python
+def run(workspace: str) -> None:
+def stop(workspace: Optional[str]) -> None:
+```
+
+**Impact:** Better IDE support and type checking.
+
+**Estimated Effort:** 3 minutes
+
+---
+
+### 4. Incomplete Docstrings (Low Priority)
+
+**Issue:** Stop command docstring doesn't mention "stop all" behavior.
+
+**Location:** `lib/vibedom/cli.py` line 106
+
+**Recommendation:**
+```python
+"""Stop running sandbox session.
+
+If workspace is provided, stops that specific sandbox.
+If omitted, stops all vibedom containers.
+"""
+```
+
+**Impact:** Better documentation and CLI help output.
+
+**Estimated Effort:** 2 minutes
+
+---
+
 ## Future Considerations
 
 ### Log Rotation
