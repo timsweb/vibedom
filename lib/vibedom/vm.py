@@ -39,12 +39,16 @@ class VMManager:
 
         # Wait for VM to be ready
         for _ in range(10):
-            result = subprocess.run(
-                ['docker', 'exec', self.container_name, 'test', '-f', '/tmp/.vm-ready'],
-                capture_output=True
-            )
-            if result.returncode == 0:
-                return
+            try:
+                result = subprocess.run(
+                    ['docker', 'exec', self.container_name, 'test', '-f', '/tmp/.vm-ready'],
+                    capture_output=True,
+                    check=False  # Don't raise on non-zero exit
+                )
+                if result.returncode == 0:
+                    return
+            except subprocess.CalledProcessError:
+                pass  # Container not ready for exec yet
             time.sleep(1)
         raise RuntimeError(f"VM '{self.container_name}' failed to become ready within 10 seconds")
 
