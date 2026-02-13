@@ -113,6 +113,123 @@ if not self.session_dir.exists():
 
 ---
 
+## Task 7: Mitmproxy Integration - Deferred Improvements
+
+**Status:** Deferred to Phase 2 or later
+**Created:** 2026-02-13
+**Priority:** Medium
+
+### 1. File I/O Error Handling (Medium Priority)
+
+**Issue:** `log_request()` in mitmproxy addon opens file without error handling. Could crash proxy on disk full or permission errors.
+
+**Location:** `vm/mitmproxy_addon.py` lines 63-73
+
+**Current Behavior:**
+```python
+def log_request(self, flow: http.HTTPFlow, allowed: bool) -> None:
+    entry = {...}
+    with open(self.network_log_path, 'a') as f:
+        f.write(json.dumps(entry) + '\n')
+```
+
+**Recommendation:**
+```python
+def log_request(self, flow: http.HTTPFlow, allowed: bool) -> None:
+    entry = {...}
+    try:
+        with open(self.network_log_path, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+    except (IOError, OSError) as e:
+        import sys
+        print(f"Warning: Failed to log request: {e}", file=sys.stderr)
+```
+
+**Impact:** Prevents proxy crashes on I/O errors.
+
+**Estimated Effort:** 5 minutes
+
+---
+
+### 2. File Handle Efficiency (Medium Priority)
+
+**Issue:** Opening and closing file for every request is inefficient under high traffic.
+
+**Location:** `vm/mitmproxy_addon.py` lines 63-73
+
+**Current Behavior:** File opened/closed for each request
+
+**Recommendation:** Use buffered logging or keep file handle open
+
+**Impact:** Performance improvement under high traffic load.
+
+**Estimated Effort:** 15 minutes
+
+**Note:** Acceptable for Phase 1 PoC with low traffic.
+
+---
+
+### 3. Missing Whitelist Warning (Medium Priority)
+
+**Issue:** When whitelist file doesn't exist, addon silently returns empty set and blocks ALL traffic. No warning logged.
+
+**Location:** `vm/mitmproxy_addon.py` lines 16-20
+
+**Recommendation:**
+```python
+if not whitelist_path.exists():
+    import sys
+    print(f"WARNING: Whitelist file not found at {whitelist_path}, blocking all traffic",
+          file=sys.stderr)
+    return set()
+```
+
+**Impact:** Improves debugging experience when whitelist is misconfigured.
+
+**Estimated Effort:** 3 minutes
+
+---
+
+### 4. Add Timestamps to Network Logs (Low Priority)
+
+**Issue:** Network log entries lack timestamps, making debugging harder.
+
+**Location:** `vm/mitmproxy_addon.py` lines 65-70
+
+**Recommendation:**
+```python
+import datetime
+entry = {
+    'timestamp': datetime.datetime.utcnow().isoformat(),
+    'method': flow.request.method,
+    'url': flow.request.pretty_url,
+    'host': flow.request.host_header or flow.request.host,
+    'allowed': allowed
+}
+```
+
+**Impact:** Better log analysis and debugging.
+
+**Estimated Effort:** 3 minutes
+
+---
+
+### 5. Expand Test Coverage (Low Priority)
+
+**Issue:** Missing tests for edge cases.
+
+**Missing Test Cases:**
+- Subdomain matching (e.g., `api.github.com` when `github.com` is whitelisted)
+- HTTPS requests (only HTTP tested)
+- Empty whitelist scenario
+- Port stripping behavior
+
+**Impact:** Reduced confidence in edge case handling.
+
+**Estimated Effort:** 20 minutes
+
+---
+
 ## Future Considerations
 
 ### Log Rotation
