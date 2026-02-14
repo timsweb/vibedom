@@ -33,13 +33,11 @@ def test_mitmproxy_is_running(vm_with_proxy):
     assert result.returncode == 0
     assert 'mitmdump' in result.stdout
 
-def test_iptables_redirect_configured(vm_with_proxy):
-    """Should have iptables rules for HTTP/HTTPS redirect."""
-    result = vm_with_proxy.exec(['iptables', '-t', 'nat', '-L', '-n'])
+def test_proxy_env_vars_configured(vm_with_proxy):
+    """Should have proxy environment variables configured system-wide."""
+    result = vm_with_proxy.exec(['sh', '-c', 'echo $HTTPS_PROXY'])
     assert result.returncode == 0
-    assert 'dpt:80' in result.stdout  # HTTP redirect
-    assert 'dpt:443' in result.stdout  # HTTPS redirect
-    assert '8080' in result.stdout  # Target port
+    assert 'http://127.0.0.1:8080' in result.stdout
 
 def test_proxy_logs_whitelisted_requests(vm_with_proxy):
     """Should log whitelisted domain requests as allowed."""

@@ -31,9 +31,16 @@ class VMManager:
                 'docker', 'run',
                 '-d',  # Detached
                 '--name', self.container_name,
-                '--privileged',  # Required for overlay mount syscalls and iptables rules
+                '--privileged',  # Required for overlay mount syscalls
                                  # WARNING: Reduces container isolation - acceptable for local dev sandbox
-                                 # TODO: Replace with specific capabilities (CAP_SYS_ADMIN, CAP_NET_ADMIN) in production
+                                 # TODO: Replace with specific capabilities (CAP_SYS_ADMIN) in production
+                # Set proxy environment variables for docker exec sessions
+                '-e', 'HTTP_PROXY=http://127.0.0.1:8080',
+                '-e', 'HTTPS_PROXY=http://127.0.0.1:8080',
+                '-e', 'NO_PROXY=localhost,127.0.0.1,::1',
+                '-e', 'http_proxy=http://127.0.0.1:8080',
+                '-e', 'https_proxy=http://127.0.0.1:8080',
+                '-e', 'no_proxy=localhost,127.0.0.1,::1',
                 '-v', f'{self.workspace}:/mnt/workspace:ro',  # Read-only workspace
                 '-v', f'{self.config_dir}:/mnt/config:ro',  # Config
                 'vibedom-alpine:latest'
