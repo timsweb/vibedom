@@ -105,3 +105,61 @@ class DLPScrubber:
                 category='PII',
                 placeholder=f'[REDACTED_{pattern_id.upper()}]',
             ))
+
+    def scrub(self, text: str) -> ScrubResult:
+        """Scrub secrets and PII from text.
+
+        Finds all matches, replaces right-to-left to preserve positions,
+        and returns scrubbed text with audit trail of findings.
+        """
+        if len(text) > MAX_SCRUB_SIZE:
+            return ScrubResult(text=text)
+
+        # Collect all matches across all patterns
+        all_matches: list[tuple[int, int, Finding, Pattern]] = []
+
+        for pattern in self.secret_patterns + self.pii_patterns:
+            for match in pattern.regex.finditer(text):
+                # Use first capturing group if present, else full match
+                if match.lastindex:
+                    start, end = match.start(1), match.end(1)
+                    matched_text = match.group(1)
+                else:
+                    start, end = match.start(), match.end()
+                    matched_text = match.group()
+
+                finding = Finding(
+                    pattern_id=pattern.id,
+                    category=pattern.category,
+                    matched_text=matched_text,
+                    start=start,
+                    end=end,
+                    placeholder=pattern.placeholder,
+                )
+                all_matches.append((start, end, finding, pattern))
+
+        if not all_matches:
+            return ScrubResult(text=text)
+
+        # Sort by start position descending (replace right-to-left)
+        all_matches.sort(key=lambda m: m[0], reverse=True)
+
+        # Remove overlapping matches (keep longest / leftmost)
+        filtered: list[tuple[int, int, Finding, Pattern]] = []
+        min_start = len(text)
+        for start, end, finding, pattern in all_matches:
+            if end <= min_start:
+                filtered.append((start, end, finding, pattern))
+                min_start = start
+
+        # Replace right-to-left
+        scrubbed = text
+        findings = []
+        for start, end, finding, pattern in filtered:
+            scrubbed = scrubbed[:start] + pattern.placeholder + scrubbed[end:]
+            findings.append(finding)
+
+        # Reverse findings so they're in left-to-right order
+        findings.reverse()
+
+        return ScrubResult(text=scrubbed, findings=findings)
