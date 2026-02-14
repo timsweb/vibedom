@@ -9,10 +9,18 @@ from typing import Optional
 class VMManager:
     """Manages VM instances for sandbox sessions."""
 
-    def __init__(self, workspace: Path, config_dir: Path):
-        self.workspace = workspace
-        self.config_dir = config_dir
-        self.container_name = f"vibedom-{workspace.name}"
+    def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None):
+        """Initialize VM manager.
+
+        Args:
+            workspace: Path to workspace directory
+            config_dir: Path to config directory
+            session_dir: Path to session directory (for repo mount)
+        """
+        self.workspace = workspace.resolve()
+        self.config_dir = config_dir.resolve()
+        self.session_dir = session_dir.resolve() if session_dir else None
+        self.container_name = f'vibedom-{workspace.name}'
 
     def start(self) -> None:
         """Start the VM with workspace mounted."""
@@ -24,6 +32,15 @@ class VMManager:
         addon_dst = self.config_dir / 'mitmproxy_addon.py'
         shutil.copy(addon_src, addon_dst)
 
+        # Prepare session repo directory if provided
+        repo_mount = []
+        session_mount = []
+        if self.session_dir:
+            repo_dir = self.session_dir / 'repo'
+            repo_dir.mkdir(parents=True, exist_ok=True)
+            repo_mount = ['-v', f'{repo_dir}:/work/repo']
+            session_mount = ['-v', f'{self.session_dir}:/mnt/session']
+
         # Start new container
         # Note: Using Docker for PoC, would use apple/container in production
         try:
@@ -31,7 +48,7 @@ class VMManager:
                 'docker', 'run',
                 '-d',  # Detached
                 '--name', self.container_name,
-                '--privileged',  # Required for overlay mount syscalls
+                '--privileged',  # Required for git operations
                                  # WARNING: Reduces container isolation - acceptable for local dev sandbox
                                  # TODO: Replace with specific capabilities (CAP_SYS_ADMIN) in production
                 # Set proxy environment variables for docker exec sessions
@@ -43,6 +60,8 @@ class VMManager:
                 '-e', 'no_proxy=localhost,127.0.0.1,::1',
                 '-v', f'{self.workspace}:/mnt/workspace:ro',  # Read-only workspace
                 '-v', f'{self.config_dir}:/mnt/config:ro',  # Config
+                *repo_mount,  # Session repo directory
+                *session_mount,  # Session directory for bundle output
                 'vibedom-alpine:latest'
             ], check=True)
         except subprocess.CalledProcessError as e:
@@ -87,14 +106,4 @@ class VMManager:
             'docker', 'exec', self.container_name
         ] + command, capture_output=True, text=True)
 
-    def get_diff(self) -> str:
-        """Get diff between workspace and overlay.
-
-        Returns:
-            Unified diff as string
-        """
-        result = self.exec([
-            'sh', '-c', 'cd / && diff -ur mnt/workspace work'
-        ])
-        # diff returns exit code 1 when there are differences
-        return result.stdout
+    

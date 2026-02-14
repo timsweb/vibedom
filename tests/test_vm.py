@@ -1,7 +1,10 @@
 import tempfile
+import subprocess
 from pathlib import Path
 import pytest
+import shutil
 from vibedom.vm import VMManager
+from vibedom.session import Session
 
 @pytest.fixture
 def test_workspace():
@@ -32,38 +35,48 @@ def test_vm_start_stop(test_workspace, test_config):
 
     vm.stop()
 
-def test_vm_overlay_filesystem(test_workspace, test_config):
-    """Should have overlay filesystem mounted at /work."""
-    vm = VMManager(test_workspace, test_config)
+def test_vm_git_repo_initialized(test_workspace, test_config):
+    """VM should initialize git repo from workspace."""
+    import subprocess
+    from vibedom.session import Session
 
-    vm.start()
+    # Create test git workspace
+    (test_workspace / 'test.txt').write_text('test content')
+    subprocess.run(['git', 'init'], cwd=test_workspace, check=True)
+    subprocess.run(['git', 'add', '.'], cwd=test_workspace, check=True)
+    subprocess.run(['git', 'commit', '-m', 'Initial'], cwd=test_workspace, check=True)
 
-    # Write to overlay
-    vm.exec(['sh', '-c', 'echo "modified" > /work/test.txt'])
+    session = Session(test_workspace, Path('/tmp/vibedom-test-logs'))
+    vm = VMManager(test_workspace, test_config, session_dir=session.session_dir)
 
-    # Check original is unchanged
-    original = test_workspace / 'test.txt'
-    assert original.read_text() == 'hello'
+    try:
+        vm.start()
 
-    # Check overlay has change
-    result = vm.exec(['cat', '/work/test.txt'])
-    assert 'modified' in result.stdout
+        # Verify git repo initialized in container
+        result = vm.exec(['sh', '-c', 'cd /work/repo && git log --oneline'])
+        assert 'Initial' in result.stdout
 
-    vm.stop()
+    finally:
+        vm.stop()
+        shutil.rmtree(session.session_dir, ignore_errors=True)
 
-def test_vm_get_diff(test_workspace, test_config):
-    """Should generate diff between workspace and overlay."""
-    vm = VMManager(test_workspace, test_config)
+def test_vm_mounts_session_repo(test_workspace, test_config):
+    """VM should mount session repo directory."""
+    session = Session(test_workspace, Path('/tmp/vibedom-test-logs'))
 
-    vm.start()
+    vm = VMManager(test_workspace, test_config, session_dir=session.session_dir)
 
-    # Modify file in overlay
-    vm.exec(['sh', '-c', 'echo "modified" > /work/test.txt'])
+    try:
+        vm.start()
 
-    diff = vm.get_diff()
+        # Verify repo directory exists in session
+        repo_dir = session.session_dir / 'repo'
+        assert repo_dir.exists(), "Repo directory should exist in session dir"
 
-    assert 'test.txt' in diff
-    assert '+modified' in diff
-    assert '-hello' in diff
+        # Verify .git exists in mounted repo
+        git_dir = repo_dir / '.git'
+        assert git_dir.exists(), "Git directory should exist in mounted repo"
 
-    vm.stop()
+    finally:
+        vm.stop()
+        shutil.rmtree(session.session_dir, ignore_errors=True)
