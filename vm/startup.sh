@@ -17,16 +17,25 @@ if [ -f /mnt/config/id_ed25519_vibedom ]; then
     ssh-add /mnt/config/id_ed25519_vibedom 2>/dev/null || true
 fi
 
-# Setup iptables to redirect all HTTP/HTTPS to mitmproxy
-echo "Configuring network interception..."
-iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
-iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 8080
+# Set proxy environment variables for all processes
+echo "Configuring explicit proxy mode..."
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
+export NO_PROXY=localhost,127.0.0.1,::1
+
+# Also set lowercase versions (some tools only check these)
+export http_proxy=$HTTP_PROXY
+export https_proxy=$HTTPS_PROXY
+export no_proxy=$NO_PROXY
+
+
+echo "Proxy environment: HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY"
 
 # Start mitmproxy (using mitmdump for non-interactive mode)
 echo "Starting mitmproxy..."
 mkdir -p /var/log/vibedom
 mitmdump \
-    --mode transparent \
+    --mode regular \
     --listen-port 8080 \
     --set confdir=/tmp/mitmproxy \
     -s /mnt/config/mitmproxy_addon.py \
