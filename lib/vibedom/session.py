@@ -1,6 +1,7 @@
 """Session management and logging."""
 
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -77,6 +78,59 @@ class Session:
             # Don't crash the session - log to stderr
             import sys
             print(f"Warning: Failed to log event: {e}", file=sys.stderr)
+
+    def create_bundle(self) -> Optional[Path]:
+        """Create git bundle from session repository.
+
+        Creates a git bundle containing all refs from the container's
+        git repository. The bundle can be used as a git remote for
+        review and merge.
+
+        Returns:
+            Path to bundle file if successful, None if creation failed
+
+        Example:
+            >>> session = Session(workspace, logs_dir)
+            >>> bundle_path = session.create_bundle()
+            >>> if bundle_path:
+            ...     # User can now: git remote add vibedom bundle_path
+        """
+        bundle_path = self.session_dir / 'repo.bundle'
+        repo_dir = self.session_dir / 'repo'
+
+        try:
+            self.log_event('Creating git bundle...', level='INFO')
+
+            # Check if repo directory exists
+            if not repo_dir.exists():
+                self.log_event('Repository directory not found', level='ERROR')
+                return None
+
+            # Create bundle with all refs
+            result = subprocess.run([
+                'git', '-C', str(repo_dir),
+                'bundle', 'create', str(bundle_path), '--all'
+            ], capture_output=True, check=True, text=True)
+
+            # Verify bundle is valid
+            verify_result = subprocess.run([
+                'git', 'bundle', 'verify', str(bundle_path)
+            ], capture_output=True, check=False, text=True)
+
+            if verify_result.returncode == 0:
+                self.log_event(f'Bundle created: {bundle_path}', level='INFO')
+                return bundle_path
+            else:
+                self.log_event(f'Bundle verification failed: {verify_result.stderr}', level='ERROR')
+                return None
+
+        except subprocess.CalledProcessError as e:
+            self.log_event(f'Bundle creation failed: {e.stderr}', level='ERROR')
+            self.log_event(f'Live repo still available at {repo_dir}', level='WARN')
+            return None
+        except Exception as e:
+            self.log_event(f'Unexpected error creating bundle: {e}', level='ERROR')
+            return None
 
     def finalize(self) -> None:
         """Finalize the session (called at end)."""
