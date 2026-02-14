@@ -3,13 +3,44 @@ set -e
 
 echo "Starting vibedom VM..."
 
-# Setup overlay filesystem
-echo "Setting up overlay filesystem..."
-# Create tmpfs for overlay upper/work dirs (overlay doesn't support itself as upperdir)
-mkdir -p /overlay
-mount -t tmpfs tmpfs /overlay
-mkdir -p /overlay/upper /overlay/work
-mount -t overlay overlay -o lowerdir=/mnt/workspace,upperdir=/overlay/upper,workdir=/overlay/work /work
+# Initialize git repository from workspace
+if [ -d /mnt/workspace/.git ]; then
+    echo "Cloning git repository from workspace..."
+    git clone /mnt/workspace/.git /work/repo
+    cd /work/repo
+
+    # Checkout the same branch user is on
+    CURRENT_BRANCH=$(git -C /mnt/workspace rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    echo "Detected branch: $CURRENT_BRANCH"
+
+    # Checkout branch (create if doesn't exist locally)
+    if git show-ref --verify --quiet refs/heads/"$CURRENT_BRANCH"; then
+        git checkout "$CURRENT_BRANCH"
+    else
+        git checkout -b "$CURRENT_BRANCH"
+    fi
+
+    echo "Working on branch: $CURRENT_BRANCH"
+else
+    echo "Non-git workspace, initializing fresh repository..."
+    mkdir -p /work/repo
+    rsync -a --exclude='.git' /mnt/workspace/ /work/repo/ || true
+    cd /work/repo
+    git init
+    
+    # Set git identity for agent commits
+    git config user.name "Vibedom Agent"
+    git config user.email "agent@vibedom.local"
+    
+    git add .
+    git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
+fi
+
+# Set git identity for agent commits (for git workspaces)
+git config user.name "Vibedom Agent"
+git config user.email "agent@vibedom.local"
+
+echo "Git repository initialized at /work/repo"
 
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
