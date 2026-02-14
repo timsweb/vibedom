@@ -1,5 +1,5 @@
 import pytest
-import subprocess
+import shutil
 from pathlib import Path
 from vibedom.vm import VMManager
 
@@ -21,7 +21,6 @@ def test_config(tmp_path):
     import vibedom
     addon_src = Path(vibedom.__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
     if addon_src.exists():
-        import shutil
         shutil.copy(addon_src, config / 'mitmproxy_addon.py')
 
     # Create whitelist with pypi.org
@@ -96,9 +95,9 @@ def test_https_whitelisting_enforced(test_workspace, test_config):
         # Test request to non-whitelisted domain
         result = vm.exec(['curl', '--max-time', '10', 'https://example.com'])
 
-        # Should be blocked (403 or connection refused)
-        # Non-zero exit code expected
-        assert result.returncode != 0 or '403' in result.stdout or '403' in result.stderr
+        # Should be blocked by proxy (403)
+        assert '403' in result.stdout or '403' in result.stderr, \
+            f"Expected 403 from proxy, got: stdout={result.stdout}, stderr={result.stderr}"
 
     finally:
         vm.stop()
