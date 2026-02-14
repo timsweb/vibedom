@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, overlay FS, secret detection)
+**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, git bundle workflow, secret detection)
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -13,10 +13,10 @@
 ### Core Components
 
 1. **VM Isolation** (`lib/vibedom/vm.py`)
-   - Docker-based PoC (will migrate to `apple/container` in production)
-   - Read-only workspace mount at `/mnt/workspace`
-   - Overlay filesystem at `/work` (tmpfs + overlay)
-   - Health check polling for VM readiness
+    - Docker-based PoC (will migrate to `apple/container` in production)
+    - Read-only workspace mount at `/mnt/workspace`
+    - Git repository at `/work/repo` (mounted from session)
+    - Health check polling for VM readiness
 
 2. **Network Control** (`vm/mitmproxy_addon.py`, `vm/startup.sh`)
    - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
@@ -42,10 +42,15 @@
 
 ### Key Design Decisions
 
-**Overlay Filesystem**: tmpfs + overlay mount (not copy-based)
-- Rationale: Large workspaces (multi-GB) make copying too slow
-- Implementation: `mount -t overlay` in `vm/startup.sh`
-- Tradeoff: Requires `--privileged` mode for mount syscalls
+**Git Bundle Workflow**: Git-native approach for agent changes (not diff-based)
+- Rationale: Cleaner code review, better GitLab integration, preserves commit history
+- Implementation: Container clones workspace, creates git bundle at session end
+- Benefits: Users can review/merge using standard git operations
+
+**Container Initialization**: Clone workspace or init fresh repo
+- Git workspaces: Clone from host `.git`, checkout current branch
+- Non-git workspaces: Initialize fresh repo with snapshot commit
+- Implementation: Git clone/init in `vm/startup.sh`
 
 **Explicit Proxy**: HTTP_PROXY/HTTPS_PROXY environment variables
 - Rationale: Works with both HTTP and HTTPS
@@ -57,6 +62,24 @@
 - Setup: `vibedom init` generates key, user adds to GitLab/GitHub
 
 ## Development Workflow
+
+### Git Bundle Workflow
+
+**Container Initialization:**
+- Git workspaces: Cloned from host, checkout current branch
+- Non-git workspaces: Fresh git init with snapshot commit
+- Agent works in `/work/repo` (mounted to `~/.vibedom/sessions/session-xyz/repo`)
+
+**During Session:**
+- Agent commits normally to isolated repo
+- User can fetch from live repo for mid-session testing
+- `git remote add vibedom-live ~/.vibedom/sessions/session-xyz/repo`
+
+**After Session:**
+- Git bundle created at `~/.vibedom/sessions/session-xyz/repo.bundle`
+- User adds bundle as remote, reviews commits
+- User merges into feature branch (with or without squash)
+- User pushes feature branch for GitLab MR
 
 ### Git Worktrees
 
@@ -99,6 +122,18 @@ All features follow TDD:
 - Input validation for log methods
 
 ## Known Limitations
+
+### Git Bundle Workflow
+
+**Current Implementation:**
+- Agent works on same branch as user's current branch
+- Bundle contains all refs from session
+- User decides to keep commits or squash during merge
+
+**Phase 2 Enhancements:**
+- Helper commands: `vibedom review`, `vibedom merge`
+- Automatic session cleanup with retention policies
+- GitLab integration for MR creation
 
 ### Proxy Mode
 
@@ -316,7 +351,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ### Known Security Limitations (Phase 1)
 
-- **Privileged mode**: Required for overlay mount (reduces container isolation)
+- **Privileged mode**: Required for git operations (reduces container isolation)
 - **No egress DLP**: Sensitive data could leak via HTTP/HTTPS requests
 - **Docker dependency**: Relies on Docker daemon security
 - **Proxy bypass**: Tools that don't respect HTTP_PROXY can bypass whitelist (~5%)
@@ -342,6 +377,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-02-14 (HTTPS support added)
-**Status**: HTTP/HTTPS whitelisting working, Phase 1 complete
+**Last Updated**: 2026-02-14 (git bundle workflow implemented)
+**Status**: HTTP/HTTPS whitelisting working, git bundle workflow complete, Phase 1 complete
 **Next Milestone**: Phase 2 - DLP integration and monitoring

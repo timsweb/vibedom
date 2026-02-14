@@ -33,8 +33,9 @@ vibedom run ~/projects/myapp
 This will:
 1. Scan workspace for secrets (Gitleaks)
 2. Show findings for review
-3. Start VM with workspace mounted
-4. Launch mitmproxy
+3. Start VM with workspace mounted as read-only
+4. Clone/create git repository in isolated session
+5. Launch mitmproxy
 
 The sandbox is now running. You can:
 
@@ -43,9 +44,9 @@ The sandbox is now running. You can:
   docker exec -it vibedom-myapp claude-code
   ```
 
-- Inspect the overlay:
+- Inspect the git repository:
   ```bash
-  docker exec -it vibedom-myapp ls /work
+  docker exec -it vibedom-myapp sh -c "cd /work/repo && git log --oneline"
   ```
 
 - Monitor network requests:
@@ -53,16 +54,143 @@ The sandbox is now running. You can:
   tail -f ~/.vibedom/logs/session-*/network.jsonl
   ```
 
+## Working with Git Bundles
+
+### Starting a Session
+
+When you start a vibedom session, the container clones your workspace repository and checks out your current branch:
+
+```bash
+# On your feature branch
+git checkout feature/add-authentication
+vibedom run ~/projects/myapp
+```
+
+The agent will work on the same branch (`feature/add-authentication`) inside an isolated git repository.
+
+### Testing Changes Mid-Session
+
+You can fetch from the live repository to test changes while the session is still running:
+
+```bash
+# Add live repo as remote (once per session)
+git remote add vibedom-live ~/.vibedom/sessions/session-20260214-123456/repo
+
+# Fetch latest commits anytime
+git fetch vibedom-live
+
+# Create test branch
+git checkout -b test-changes vibedom-live/feature/add-authentication
+
+# Test the changes
+npm test
+npm run dev
+
+# Session continues...
+```
+
+### Reviewing and Merging Changes
+
+After stopping the session, a git bundle is created:
+
+```bash
+vibedom stop ~/projects/myapp
+# Creates bundle at ~/.vibedom/sessions/session-xyz/repo.bundle
+```
+
+**Add bundle as remote and review:**
+
+```bash
+git remote add vibedom-xyz ~/.vibedom/sessions/session-xyz/repo.bundle
+git fetch vibedom-xyz
+
+# Review commits
+git log vibedom-xyz/feature/add-authentication
+git log --oneline vibedom-xyz/feature/add-authentication ^feature/add-authentication
+
+# Review changes
+git diff feature/add-authentication..vibedom-xyz/feature/add-authentication
+```
+
+**Merge (keep commit history):**
+
+```bash
+git checkout feature/add-authentication
+git merge vibedom-xyz/feature/add-authentication
+```
+
+**Merge (squash commits):**
+
+```bash
+git checkout feature/add-authentication
+git merge --squash vibedom-xyz/feature/add-authentication
+git commit -m "Implement authentication system
+
+Agent implemented:
+- User login/logout endpoints
+- JWT token generation
+- Password hashing
+"
+```
+
+**Push for peer review:**
+
+```bash
+git push origin feature/add-authentication
+# Create Merge Request in GitLab
+```
+
+**Cleanup:**
+
+```bash
+git remote remove vibedom-xyz
+```
+
+### Session Management
+
+**List sessions:**
+
+```bash
+ls ~/.vibedom/logs/
+```
+
+**Clean up old sessions:**
+
+```bash
+rm -rf ~/.vibedom/logs/session-20260214-123456
+```
+
+### Troubleshooting
+
+**Bundle creation failed:**
+
+If bundle creation fails, the live repo is still available:
+
+```bash
+git remote add vibedom-live ~/.vibedom/sessions/session-xyz/repo
+git fetch vibedom-live
+# Manually create bundle:
+cd ~/.vibedom/sessions/session-xyz/repo
+git bundle create ../repo.bundle --all
+```
+
+**Non-git workspace:**
+
+If your workspace isn't a git repository, vibedom will initialize a fresh repo with an initial snapshot commit.
+
 ## Stopping a Sandbox
 
 ```bash
 vibedom stop ~/projects/myapp
 ```
 
-You'll see a diff of changes made by the agent. Choose:
-- **Yes**: Apply changes to your workspace
-- **No**: Discard all changes
-- **Review**: Open diff in your editor
+This will:
+1. Create a git bundle from the session repository
+2. Display instructions for reviewing and merging changes
+3. Stop and remove the container
+4. Finalize session logs
+
+The bundle contains all commits made by the agent and can be reviewed and merged into your workspace.
 
 ## Network Whitelisting
 
@@ -135,6 +263,17 @@ docker logs vibedom-<name>
 Rebuild VM image:
 ```bash
 ./vm/build.sh
+```
+
+### Git repository not initialized
+
+If the container fails to initialize the git repository, check:
+1. Is the workspace a git repository?
+2. Is the `.git` directory accessible?
+3. Check container logs for specific errors
+
+```bash
+docker logs vibedom-<name>
 ```
 
 ## Advanced
