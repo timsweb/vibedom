@@ -63,130 +63,150 @@ def run(workspace):
     if not workspace_path.is_dir():
         click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
         sys.exit(1)
-    config_dir = Path.home() / '.vibedom'
-    logs_dir = config_dir / 'logs'
+    
+    # Initialize session
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create session
     session = Session(workspace_path, logs_dir)
     session.log_event('Starting sandbox...')
 
     try:
-        # Pre-flight scan
-        click.echo(f"🔍 Pre-flight scan: {workspace_path}")
-        session.log_event('Running Gitleaks scan')
-
+        # Scan for secrets
+        click.echo("🔍 Scanning for secrets...")
         findings = scan_workspace(workspace_path)
 
         if not review_findings(findings):
             session.log_event('Cancelled by user', level='WARN')
             session.finalize()
-            click.secho("❌ Cancelled by user", fg='red')
+            click.secho("❌ Cancelled", fg='yellow')
             sys.exit(1)
 
-        session.log_event(f'Pre-flight complete ({len(findings)} findings approved)')
-        click.echo("✅ Pre-flight complete")
-
-        # Start VM
-        click.echo(f"🚀 Starting sandbox...")
-        session.log_event('Starting VM')
-
-        vm = VMManager(workspace_path, config_dir)
+        # Start VM with session directory
+        click.echo("🚀 Starting sandbox...")
+        config_dir = Path.home() / '.vibedom'
+        vm = VMManager(workspace_path, config_dir, session_dir=session.session_dir)
         vm.start()
 
         session.log_event('VM started successfully')
-        click.echo(f"✅ Sandbox running!")
-        click.echo(f"   Workspace: {workspace_path}")
-        click.echo(f"   Logs: {session.session_dir}")
-        click.echo("")
-        click.echo("To stop: vibedom stop")
-        click.echo("To inspect: docker exec -it vibedom-{} sh".format(workspace_path.name))
 
-        session.finalize()
+        click.echo(f"\n✅ Sandbox running!")
+        click.echo(f"📁 Session: {session.session_dir}")
+        click.echo(f"📦 Live repo: {session.session_dir / 'repo'}")
+        click.echo(f"\n💡 To test changes mid-session:")
+        click.echo(f"  git remote add vibedom-live {session.session_dir / 'repo'}")
+        click.echo(f"  git fetch vibedom-live")
+        click.echo(f"\n🛑 To stop:")
+        click.echo(f"  vibedom stop {workspace_path}")
+
+        # Don't finalize yet - session is still active
 
     except Exception as e:
         session.log_event(f'Error: {e}', level='ERROR')
-        try:
-            vm.stop()  # Clean up any partial container
-        except:
-            pass  # Best effort cleanup
         session.finalize()
         click.secho(f"❌ Error: {e}", fg='red')
         sys.exit(1)
 
 @main.command()
-@click.argument('workspace', required=False)
+@click.argument('workspace', type=click.Path(exists=True), required=False)
 def stop(workspace):
-    """Stop running sandbox session."""
-    if workspace:
-        workspace_path = Path(workspace).resolve()
-    else:
+    """Stop sandbox and create git bundle.
+
+    If workspace provided, stops that specific sandbox.
+    If no workspace provided, stops all vibedom containers.
+    """
+    if workspace is None:
         # Stop all vibedom containers
-        result = subprocess.run([
-            'docker', 'ps', '-a', '--filter', 'name=vibedom-', '--format', '{{.Names}}'
-        ], capture_output=True, text=True)
+        try:
+            result = subprocess.run([
+                'docker', 'ps', '-a', '--filter', 'name=vibedom-', '--format', '{{.Names}}'
+            ], capture_output=True, text=True, check=True)
 
-        containers = result.stdout.strip().split('\n')
-        if not containers or not containers[0]:
-            click.echo("No running sandboxes found")
-            return
+            containers = [name.strip() for name in result.stdout.split('\n') if name.strip()]
 
-        failed = []
-        for container in containers:
-            click.echo(f"Stopping {container}...")
-            result = subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
-            if result.returncode != 0:
-                failed.append(container)
-                click.secho(f"  Warning: Failed to stop {container}", fg='yellow')
+            if not containers:
+                click.echo("No vibedom containers running")
+                return
 
-        if failed:
-            click.secho(f"⚠️  Failed to stop {len(failed)} container(s): {', '.join(failed)}", fg='yellow')
-        else:
-            click.echo("✅ All sandboxes stopped")
+            click.echo(f"Stopping {len(containers)} container(s)...")
+            for container in containers:
+                subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+
+            click.echo(f"✅ Stopped {len(containers)} container(s)")
+
+        except subprocess.CalledProcessError as e:
+            click.secho(f"❌ Error stopping containers: {e}", fg='red')
+            sys.exit(1)
         return
 
-    # Stop specific container
-    config_dir = Path.home() / '.vibedom'
-    vm = VMManager(workspace_path, config_dir)
+    # Stop specific workspace
+    workspace_path = Path(workspace).resolve()
 
-    # Get diff before stopping
-    click.echo("Generating diff...")
-    diff = vm.get_diff()
+    # Find active session
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    session = None
 
-    if diff:
-        click.echo("\n" + "="*60)
-        click.echo("Changes made in sandbox:")
-        click.echo("="*60)
-        click.echo(diff[:2000])  # Show first 2000 chars
-        if len(diff) > 2000:
-            click.echo(f"\n... ({len(diff) - 2000} more characters)")
-        click.echo("="*60)
+    if logs_dir.exists():
+        # Find most recent session for this workspace
+        for session_dir in sorted(logs_dir.glob('session-*'), reverse=True):
+            session_log = session_dir / 'session.log'
+            if session_log.exists():
+                # Check if this session is for our workspace
+                log_content = session_log.read_text()
+                if str(workspace_path) in log_content:
+                    session = Session(workspace_path, logs_dir)
+                    session.session_dir = session_dir
+                    break
 
-        apply = click.confirm("\nApply these changes to workspace?", default=False)
+    vm = VMManager(workspace_path, Path.home() / '.vibedom', session_dir=session.session_dir if session else None)
 
-        if apply:
-            # Apply patch
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.patch', delete=False) as f:
-                f.write(diff)
-                patch_file = f.name
+    if session:
+        # Create bundle before stopping
+        click.echo("Creating git bundle...")
+        bundle_path = session.create_bundle()
 
+        # Finalize session
+        session.finalize()
+
+        # Stop VM
+        vm.stop()
+
+        # Show user how to review
+        if bundle_path:
+            # Get current branch name from workspace
             try:
-                with open(patch_file) as f:
-                    subprocess.run([
-                        'patch', '-d', str(workspace_path), '-p2'
-                    ], stdin=f, check=True)
-                click.echo("✅ Changes applied")
-            except subprocess.CalledProcessError as e:
-                click.secho(f"❌ Failed to apply patch: {e}", fg='red')
-                click.echo(f"   Workspace: {workspace_path}")
-                click.echo(f"   Patch file: {patch_file}")
-                click.echo("   Tip: Check file permissions and workspace directory")
-            finally:
-                Path(patch_file).unlink()
-    else:
-        click.echo("No changes made")
+                current_branch = subprocess.run(
+                    ['git', '-C', str(workspace_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    capture_output=True, text=True, check=True
+                ).stdout.strip()
+            except subprocess.CalledProcessError:
+                current_branch = 'main'
 
-    vm.stop()
-    click.echo("✅ Sandbox stopped")
+            click.echo(f"\n✅ Session complete!")
+            click.echo(f"📦 Bundle: {bundle_path}")
+            click.echo(f"\n📋 To review changes:")
+            click.echo(f"  git remote add vibedom-xyz {bundle_path}")
+            click.echo(f"  git fetch vibedom-xyz")
+            click.echo(f"  git log vibedom-xyz/{current_branch}")
+            click.echo(f"  git diff {current_branch}..vibedom-xyz/{current_branch}")
+            click.echo(f"\n🔀 To merge into your feature branch (keep commits):")
+            click.echo(f"  git merge vibedom-xyz/{current_branch}")
+            click.echo(f"\n🔀 To merge (squash):")
+            click.echo(f"  git merge --squash vibedom-xyz/{current_branch}")
+            click.echo(f"  git commit -m 'Apply changes from vibedom session'")
+            click.echo(f"\n🚀 Push for peer review:")
+            click.echo(f"  git push origin {current_branch}")
+            click.echo(f"\n🧹 Cleanup:")
+            click.echo(f"  git remote remove vibedom-xyz")
+        else:
+            click.secho(f"⚠️  Bundle creation failed", fg='yellow')
+            click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
+            click.echo(f"\nYou can still add it as a remote:")
+            click.echo(f"  git remote add vibedom-live {session.session_dir / 'repo'}")
+    else:
+        # No session found, just stop container
+        vm.stop()
+        click.echo("✅ Container stopped")
 
 if __name__ == '__main__':
     main()
