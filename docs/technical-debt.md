@@ -21,6 +21,78 @@ This document tracks improvements deferred for future implementation.
 
 ---
 
+## Git Bundle Workflow - Phase 2 Enhancements
+
+**Status:** Phase 1 complete, enhancements deferred
+**Created:** 2026-02-14
+**Priority:** Medium
+
+### 1. Helper Commands (Medium Priority)
+
+**Current:** Users run manual git commands for review/merge
+
+**Proposed:**
+```bash
+vibedom review <workspace>      # Auto-add remote, show log/diff
+vibedom merge <workspace>       # Merge and cleanup
+vibedom merge <workspace> --squash
+vibedom sessions list           # Show all bundles
+vibedom sessions clean --older-than 30d
+```
+
+**Estimated Effort:** 4-6 hours
+
+### 2. Session Recovery (Low Priority)
+
+**Issue:** If bundle creation fails, user must manually create bundle
+
+**Proposed:**
+```bash
+vibedom recover <session-id>    # Retry bundle creation from live repo
+```
+
+**Estimated Effort:** 1-2 hours
+
+### 3. Automatic Cleanup (Medium Priority)
+
+**Issue:** Session directories accumulate indefinitely
+
+**Proposed:**
+- Configurable retention policy (default 30 days)
+- `~/.vibedom/config.toml`: `session_retention_days = 30`
+- Automatic cleanup on vibedom start
+
+**Estimated Effort:** 2-3 hours
+
+### 4. GitLab Integration (High Priority for Production)
+
+**Issue:** Manual push and MR creation
+
+**Proposed:**
+```bash
+vibedom push <workspace>        # Push branch, create MR
+```
+
+Uses GitLab API to create MR with:
+- Session metadata (bundle link)
+- Agent commit summary
+- Links to session logs
+
+**Estimated Effort:** 6-8 hours
+
+### 5. Disk Space Checks (Low Priority)
+
+**Issue:** Bundle creation can fail due to disk space
+
+**Proposed:**
+- Check available space before bundle creation
+- Warn if < 1GB available
+- Offer to cleanup old sessions
+
+**Estimated Effort:** 1 hour
+
+---
+
 ## Task 6: Session Management - Deferred Improvements
 
 **Status:** Deferred to Phase 2 or later
