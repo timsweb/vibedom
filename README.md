@@ -6,20 +6,19 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 
 - **VM-level isolation**: Uses Apple's Virtualization.framework (not Docker namespaces)
 - **Overlay filesystem**: Agent modifications are reviewed before applying to your code
-- **Network whitelisting**: HTTP traffic control with domain whitelist (HTTPS in Phase 2)
+- **Network whitelisting**: HTTP and HTTPS traffic control with domain whitelist
 - **Secret detection**: Pre-flight Gitleaks scan catches hardcoded credentials
 - **Audit logging**: Complete network and session logs for compliance
 
 ## Status
 
-🚧 **Phase 1 (Current)**: Core sandbox with basic network control
+✅ **Phase 1 Complete**: Core sandbox with HTTP/HTTPS network control
 - ✅ VM isolation with overlay FS
-- ✅ mitmproxy with whitelist enforcement
+- ✅ mitmproxy with HTTP/HTTPS whitelist enforcement
 - ✅ Gitleaks pre-flight scanning
 - ✅ Session logging
 
-🔜 **Phase 2 (Next)**: HTTPS support and DLP
-- ⏳ HTTPS whitelisting (explicit proxy mode)
+🔜 **Phase 2 (Next)**: DLP and monitoring
 - ⏳ Presidio integration
 - ⏳ Context-aware scrubbing
 - ⏳ High-severity alerting
@@ -58,10 +57,8 @@ vibedom stop ~/projects/myapp
 1. **Pre-flight scan**: Gitleaks checks for hardcoded secrets
 2. **VM boot**: Alpine Linux VM starts with workspace mounted read-only
 3. **Overlay FS**: Agent works in `/work` (overlay), host files unchanged
-4. **Network filter**: mitmproxy enforces whitelist, logs HTTP requests
+4. **Network filter**: mitmproxy enforces whitelist, logs HTTP/HTTPS requests
 5. **Review changes**: At session end, diff is shown for approval
-
-**Note**: Phase 1 supports HTTP whitelisting only. HTTPS support is planned for Phase 2. See [docs/TESTING.md](docs/TESTING.md#https-support) for details.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture details.
 

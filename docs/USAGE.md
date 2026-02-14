@@ -64,6 +64,45 @@ You'll see a diff of changes made by the agent. Choose:
 - **No**: Discard all changes
 - **Review**: Open diff in your editor
 
+## Network Whitelisting
+
+The sandbox enforces domain whitelisting for both HTTP and HTTPS traffic.
+
+### Adding Domains
+
+Edit `~/.vibedom/trusted_domains.txt`:
+
+```
+pypi.org
+npmjs.com
+github.com
+gitlab.com
+```
+
+### Testing Network Access
+
+```bash
+# Inside sandbox
+curl https://pypi.org/simple/    # ✅ Whitelisted, succeeds
+curl https://example.com/         # ❌ Not whitelisted, blocked
+```
+
+### How It Works
+
+Vibedom uses mitmproxy in explicit proxy mode with HTTP_PROXY/HTTPS_PROXY environment variables. Most modern tools (curl, pip, npm, git) respect these variables automatically.
+
+**Supported tools:**
+- curl, wget, httpie
+- pip (Python packages)
+- npm, yarn (Node.js packages)
+- git (over HTTPS)
+- Most language HTTP clients (requests, axios, etc.)
+
+**Tools that may need configuration:**
+- Docker client: Set HTTP_PROXY in daemon config
+- Java applications: May need -Dhttp.proxyHost/-Dhttp.proxyPort
+- Custom binaries: Check tool documentation for proxy support
+
 ## Troubleshooting
 
 ### "Domain not whitelisted"

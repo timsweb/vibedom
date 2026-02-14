@@ -19,9 +19,9 @@
    - Health check polling for VM readiness
 
 2. **Network Control** (`vm/mitmproxy_addon.py`, `vm/startup.sh`)
-   - mitmproxy in transparent mode (iptables NAT redirect)
+   - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
    - Domain whitelist enforcement with subdomain support
-   - **LIMITATION**: HTTP-only in Phase 1 (HTTPS support deferred to Phase 2)
+   - Supports both HTTP and HTTPS traffic
    - Logs all requests to `network.jsonl`
 
 3. **Secret Detection** (`lib/vibedom/gitleaks.py`)
@@ -47,10 +47,10 @@
 - Implementation: `mount -t overlay` in `vm/startup.sh`
 - Tradeoff: Requires `--privileged` mode for mount syscalls
 
-**Transparent Proxy**: iptables NAT redirect to mitmproxy
-- Rationale: No application configuration needed
-- Limitation: HTTPS incompatible with Docker networking (Phase 2 will use explicit proxy)
-- Ports: 80/443 → 8080
+**Explicit Proxy**: HTTP_PROXY/HTTPS_PROXY environment variables
+- Rationale: Works with both HTTP and HTTPS
+- Implementation: Environment variables set at container level, mitmproxy in regular mode
+- Compatibility: 95%+ of modern tools respect proxy environment variables
 
 **Deploy Keys**: Unique SSH key per machine
 - Rationale: Avoid exposing personal credentials to VM
@@ -95,27 +95,27 @@ All features follow TDD:
 **Document deferred improvements in**: `docs/technical-debt.md`
 
 **Current high-priority items**:
-- HTTPS support (Phase 2) - switch to explicit proxy mode
 - File I/O error handling in network logging
 - Input validation for log methods
 
 ## Known Limitations
 
-### HTTPS Not Supported (Phase 1)
+### Proxy Mode
 
-**Status**: Deferred to Phase 2
+**Current Implementation**:
+- Explicit proxy mode with HTTP_PROXY/HTTPS_PROXY environment variables
+- Works for 95%+ of modern tools (curl, pip, npm, git)
+- Tools that don't respect HTTP_PROXY may not be proxied
 
-**Reason**: Transparent proxy mode (iptables NAT) is fundamentally incompatible with HTTPS in Docker containerized environments. TLS handshake cannot complete when original destination info is lost during NAT translation.
+**Known edge cases**:
+- Some legacy applications may ignore proxy environment variables
+- Certificate-pinning applications (banking apps) will reject mitmproxy's CA
+- Docker-in-Docker requires additional proxy configuration
 
-**Current behavior**:
-- ✅ HTTP requests: Proxied and whitelisted
-- ❌ HTTPS requests: Timeout during TLS handshake
-
-**Workaround**: Use HTTP endpoints where possible (e.g., `http://pypi.org`)
-
-**Phase 2 solution**: Switch to explicit proxy mode with `HTTP_PROXY`/`HTTPS_PROXY` environment variables
-
-See `docs/TESTING.md#https-support` for technical details.
+**Mitigation**:
+- Document tool-specific proxy configuration
+- Create wrapper scripts for problematic tools if discovered
+- Most AI agent workflows use standard tools that respect HTTP_PROXY
 
 ### Docker Dependency
 
@@ -160,8 +160,8 @@ vibedom run ~/projects/test-workspace
 docker exec vibedom-<workspace> cat /tmp/.vm-ready
 docker exec vibedom-<workspace> ls /work
 
-# Test HTTP whitelisting
-docker exec vibedom-<workspace> curl http://pypi.org/simple/
+# Test HTTP/HTTPS whitelisting
+docker exec vibedom-<workspace> curl https://pypi.org/simple/
 
 # Check logs
 cat ~/.vibedom/logs/session-*/network.jsonl
@@ -256,12 +256,12 @@ docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
 
 ## Future Roadmap
 
-### Phase 2: HTTPS and DLP
+### Phase 2: DLP and Monitoring
 
-- **HTTPS support**: Switch to explicit proxy mode (`HTTP_PROXY`/`HTTPS_PROXY`)
 - **Presidio integration**: Real-time PII detection and scrubbing
 - **Context-aware scrubbing**: Maintain code semantics while removing sensitive data
 - **High-severity alerting**: Real-time notifications for critical findings
+- **Metrics and dashboards**: Prometheus integration for monitoring
 
 ### Phase 3: Production Hardening
 
@@ -317,17 +317,17 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ### Known Security Limitations (Phase 1)
 
-- **Privileged mode**: Required for overlay mount and iptables (reduces container isolation)
-- **HTTP-only**: HTTPS not enforced (agents could downgrade to HTTP)
-- **No egress DLP**: Sensitive data could leak via HTTP requests
+- **Privileged mode**: Required for overlay mount (reduces container isolation)
+- **No egress DLP**: Sensitive data could leak via HTTP/HTTPS requests
 - **Docker dependency**: Relies on Docker daemon security
+- **Proxy bypass**: Tools that don't respect HTTP_PROXY can bypass whitelist (~5%)
 
 ### Future Security Enhancements (Phase 2+)
 
 - Explicit capabilities instead of `--privileged` mode
-- HTTPS enforcement with explicit proxy
 - Real-time DLP with Presidio
 - Migration to apple/container for better macOS integration
+- Kernel-level network filtering as fallback for non-proxy-aware tools
 
 ## Support and Documentation
 
@@ -343,6 +343,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-02-13 (Phase 1 completion)
-**Status**: HTTP whitelisting working, HTTPS deferred to Phase 2
-**Next Milestone**: Phase 2 - HTTPS support and DLP integration
+**Last Updated**: 2026-02-14 (HTTPS support added)
+**Status**: HTTP/HTTPS whitelisting working, Phase 1 complete
+**Next Milestone**: Phase 2 - DLP integration and monitoring

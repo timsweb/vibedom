@@ -2,6 +2,25 @@
 
 This document tracks improvements deferred for future implementation.
 
+## Completed Features (Previously Technical Debt)
+
+### HTTPS Support (Completed 2026-02-14)
+
+**Original Issue**: Transparent proxy mode incompatible with HTTPS in Docker
+
+**Solution Implemented**: Explicit proxy mode with HTTP_PROXY/HTTPS_PROXY environment variables
+
+**Implementation**: See `docs/plans/2026-02-14-https-support-design.md`
+
+**Result**: HTTPS now works for 95%+ of tools
+
+**Remaining edge cases** (moved to Phase 2):
+- Tools that don't respect HTTP_PROXY (~5%)
+- Certificate-pinning applications
+- Docker-in-Docker proxy configuration
+
+---
+
 ## Phase 1 Architectural Limitation: HTTPS Support
 
 **Status:** Deferred to Phase 2

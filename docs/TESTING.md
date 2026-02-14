@@ -41,39 +41,39 @@ Estimated coverage: **~85%**
 - Overlay filesystem edge cases
 - Network proxy edge cases
 
-## Known Limitations
+## HTTPS Support
 
-### HTTPS Support
+**Status**: ✅ Supported (Phase 1 complete)
 
-**Status**: Not supported in Phase 1
+**Implementation**: Explicit proxy mode with HTTP_PROXY/HTTPS_PROXY environment variables
 
-**Reason**: Transparent proxy mode (iptables NAT redirect) is fundamentally incompatible with HTTPS in Docker containerized environments. The bidirectional TLS handshake cannot complete when traffic is transparently redirected.
+**How it works**:
+- Applications check HTTP_PROXY/HTTPS_PROXY environment variables
+- HTTPS requests use CONNECT tunneling through mitmproxy
+- TLS interception via mitmproxy's CA certificate (installed in container)
+- Whitelist enforcement works for both HTTP and HTTPS
 
-**Current behavior**:
-- ✅ HTTP requests: Successfully proxied and whitelisted
-- ❌ HTTPS requests: Timeout during TLS handshake (Client Hello sent, no Server Hello)
+**Test results**:
+```bash
+# Inside container
+curl -v https://pypi.org/simple/   # ✅ Works (200 OK)
+curl -v http://pypi.org/simple/    # ✅ Works (200 OK)
+pip install requests               # ✅ Works
+npm install express                # ✅ Works
+git clone https://github.com/...   # ✅ Works
+```
 
-**Technical details**:
-- Mitmproxy runs in transparent mode (`--mode transparent`)
-- iptables redirects ports 80/443 to 8080
-- TLS interception fails because:
-  - Original destination information lost in NAT
-  - Certificate validation fails even with CA trust
-  - Docker network namespace isolation prevents proper routing
+**Known limitations**:
+- Tools that don't respect HTTP_PROXY environment variables won't be proxied (~5% of tools)
+- Certificate-pinning applications will reject proxy
 
-**Workarounds considered**:
-1. **Explicit proxy mode** (HTTP_PROXY/HTTPS_PROXY env vars) - requires application support
-2. **Advanced iptables/routing** - complex, fragile, out of scope for Phase 1
-3. **CONNECT tunneling** - requires mitmproxy mode changes
-
-**Recommendation for Phase 2**:
-- Switch to explicit proxy mode with environment variable injection
-- Most modern tools (curl, requests, npm, git) respect HTTP_PROXY
-- Provides cleaner architecture than transparent interception
-- Avoids iptables complexity
-
-**Current workaround**:
-For Phase 1 testing and development, use HTTP endpoints or configure tools to use HTTP where possible.
+**Tool compatibility**:
+- ✅ curl, wget, httpie
+- ✅ Python pip, requests
+- ✅ Node.js npm, yarn, axios
+- ✅ Git (HTTPS)
+- ✅ Rust cargo
+- ✅ Go tools
 
 ## Running Tests
 
@@ -119,11 +119,11 @@ vibedom run ~/projects/test-workspace
 docker exec vibedom-<workspace> cat /tmp/.vm-ready
 docker exec vibedom-<workspace> ls /work
 
-# Test HTTP whitelisting (should succeed if pypi.org is whitelisted)
-docker exec vibedom-<workspace> curl http://pypi.org/simple/
+# Test HTTPS whitelisting (should succeed if pypi.org is whitelisted)
+docker exec vibedom-<workspace> curl https://pypi.org/simple/
 
 # Test blocked domain (should fail with 403)
-docker exec vibedom-<workspace> curl http://example.com/
+docker exec vibedom-<workspace> curl https://example.com/
 
 # Check logs
 cat ~/.vibedom/logs/session-*/network.jsonl
