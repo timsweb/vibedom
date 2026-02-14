@@ -96,6 +96,8 @@ Vibedom uses mitmproxy in explicit proxy mode with HTTP_PROXY/HTTPS_PROXY enviro
 - pip (Python packages)
 - npm, yarn (Node.js packages)
 - git (over HTTPS)
+- cargo (Rust packages)
+- Go tools (go get)
 - Most language HTTP clients (requests, axios, etc.)
 
 **Tools that may need configuration:**

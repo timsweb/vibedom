@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete (HTTP whitelisting, VM isolation, overlay FS, secret detection)
+**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, overlay FS, secret detection)
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -267,7 +267,6 @@ docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
 
 - **apple/container migration**: Replace Docker with native macOS containers
 - **Log rotation**: Implement size limits and rotation policies
-- **Metrics and monitoring**: Prometheus integration, dashboards
 - **Multi-tenant support**: Workspace isolation for multiple users
 
 ## Contributing Guidelines
