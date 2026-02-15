@@ -32,6 +32,16 @@ class VMManager:
         addon_dst = self.config_dir / 'mitmproxy_addon.py'
         shutil.copy(addon_src, addon_dst)
 
+        # Copy DLP scrubber module to config dir
+        scrubber_src = Path(__file__).parent.parent.parent / 'vm' / 'dlp_scrubber.py'
+        scrubber_dst = self.config_dir / 'dlp_scrubber.py'
+        shutil.copy(scrubber_src, scrubber_dst)
+
+        # Copy gitleaks config for runtime DLP patterns
+        gitleaks_src = Path(__file__).parent / 'config' / 'gitleaks.toml'
+        gitleaks_dst = self.config_dir / 'gitleaks.toml'
+        shutil.copy(gitleaks_src, gitleaks_dst)
+
         # Prepare session repo directory if provided
         repo_mount = []
         session_mount = []
