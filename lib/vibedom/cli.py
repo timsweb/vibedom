@@ -118,19 +118,41 @@ def stop(workspace):
     if workspace is None:
         # Stop all vibedom containers
         try:
-            result = subprocess.run([
-                'docker', 'ps', '-a', '--filter', 'name=vibedom-', '--format', '{{.Names}}'
-            ], capture_output=True, text=True, check=True)
+            runtime, runtime_cmd = VMManager._detect_runtime()
+        except RuntimeError as e:
+            click.secho(f"❌ {e}", fg='red')
+            sys.exit(1)
 
-            containers = [name.strip() for name in result.stdout.split('\n') if name.strip()]
+        try:
+            if runtime == 'apple':
+                result = subprocess.run(
+                    ['container', 'list', '--all', '--format', '{{.Names}}'],
+                    capture_output=True, text=True, check=True,
+                )
+            else:
+                result = subprocess.run(
+                    ['docker', 'ps', '-a', '--filter', 'name=vibedom-',
+                     '--format', '{{.Names}}'],
+                    capture_output=True, text=True, check=True,
+                )
+
+            containers = [
+                name.strip() for name in result.stdout.split('\n')
+                if name.strip() and name.strip().startswith('vibedom-')
+            ]
 
             if not containers:
                 click.echo("No vibedom containers running")
                 return
 
             click.echo(f"Stopping {len(containers)} container(s)...")
-            for container in containers:
-                subprocess.run(['docker', 'rm', '-f', container], capture_output=True)
+            for name in containers:
+                if runtime == 'apple':
+                    subprocess.run(['container', 'stop', name], capture_output=True)
+                    subprocess.run(['container', 'delete', '--force', name],
+                                   capture_output=True)
+                else:
+                    subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
 
             click.echo(f"✅ Stopped {len(containers)} container(s)")
 
