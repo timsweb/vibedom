@@ -1,27 +1,28 @@
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'vm'))
 
+try:
+    from mitmproxy import http
+except ImportError:
+    from unittest.mock import MagicMock
 
-class MockRequest:
-    """Mock HTTP request object."""
-    def __init__(self):
-        self.host: str = ""
-        self.host_header: str = ""
-        self.content: bytes | None = None
-        self.pretty_url: str = ""
-        self.url: str = ""
-        self.headers: dict = {}
-        self.method: str = "GET"
+    class MockResponse:
+        """Mock Response for testing when mitmproxy not installed."""
+        @staticmethod
+        def make(status_code, body, headers):
+            return Mock(status_code=status_code, content=body, headers=headers)
 
+    class MockHTTPFlow:
+        """Mock HTTPFlow for testing when mitmproxy not installed."""
+        request = None
+        response = None
 
-class MockHTTPFlow:
-    """Mock HTTP flow object."""
-    def __init__(self):
-        self.request = MockRequest()
-        self.response = None
+    http = MagicMock()
+    http.Response = MockResponse
+    http.HTTPFlow = MockHTTPFlow
 
 
 @patch('pathlib.Path.mkdir')
@@ -31,7 +32,7 @@ def test_request_headers_pass_through(mock_mkdir):
 
     proxy = VibedomProxy()
 
-    flow = MockHTTPFlow()
+    flow = Mock(spec=http.HTTPFlow)
     flow.request.host = "api.anthropic.com"
     flow.request.host_header = "api.anthropic.com"
     flow.request.content = None

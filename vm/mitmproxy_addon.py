@@ -3,7 +3,20 @@
 import json
 import sys
 from pathlib import Path
-from mitmproxy import http
+
+try:
+    from mitmproxy import http
+except ImportError:
+    from unittest.mock import MagicMock
+
+    class MockResponse:
+        """Mock Response for testing when mitmproxy not installed."""
+        @staticmethod
+        def make(status_code, body, headers):
+            return MagicMock(status_code=status_code, content=body, headers=headers)
+
+    http = MagicMock()
+    http.Response = MockResponse
 
 # Import DLP scrubber (copied alongside this file to /mnt/config/)
 sys.path.insert(0, str(Path(__file__).parent))
@@ -86,6 +99,35 @@ class VibedomProxy:
             return result.text.encode('utf-8'), result.findings
         return content, []
 
+    def _scrub_url(self, url: str) -> tuple[str, list]:
+        """Scrub secrets from URL query parameters.
+
+        Returns:
+            Tuple of (possibly-scrubbed URL, list of findings)
+        """
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url, []
+
+        query_params = parse_qs(parsed.query)
+        findings = []
+
+        for key, values in query_params.items():
+            for i, value in enumerate(values):
+                result = self.scrubber.scrub(value)
+                if result.was_scrubbed:
+                    query_params[key][i] = result.text
+                    findings.extend(result.findings)
+
+        if not findings:
+            return url, []
+
+        scrubbed_query = urlencode(query_params, doseq=True)
+        scrubbed_url = urlunparse(parsed._replace(query=scrubbed_query))
+        return scrubbed_url, findings
+
     def _format_findings(self, findings: list) -> list[dict]:
         """Format findings for audit logging with truncated secrets."""
         return [
@@ -144,6 +186,12 @@ class VibedomProxy:
         domain = flow.request.host_header or flow.request.host
 
         scrubbed_findings = []
+
+        # Scrub URL query parameters
+        url_scrubbed, url_findings = self._scrub_url(flow.request.pretty_url)
+        if url_scrubbed != flow.request.pretty_url:
+            flow.request.url = url_scrubbed
+            scrubbed_findings.extend(url_findings)
 
         # Scrub request body before forwarding
         if flow.request.content:
