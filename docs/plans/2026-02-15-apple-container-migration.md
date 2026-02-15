@@ -792,15 +792,43 @@ git commit -m "docs: add apple/container information to README and final verific
 6. **Testing** - Comprehensive manual testing plan for apple/container functionality
 7. **Final verification** - Update DLP plan notes, add README information, final test run
 
-**Estimated Effort:** 8-16 hours
+**Estimated Effort:** 4-6 hours (simplified from research)
 
 **Risks:**
-- Unknown apple/container CLI behavior differences
-- Platform-specific issues on non-Apple Silicon
-- Potential integration issues with existing workflows
+- apple/container CLI may have subtle differences from Docker (command flag naming, output format)
+- Containerfile format may need minor tweaks
+- Mount syntax is different (--mount vs -v)
+- Testing on Apple Silicon required for production
 
 **Mitigation:**
-- Docker fallback always available
-- Feature flag for runtime selection
-- Auto-detection prefers apple/container
-- Comprehensive testing plan
+- Docker fallback always available (no breaking changes to core logic)
+- Runtime detection with CLI flag (--container-runtime auto/dockert/apple)
+- Comprehensive testing plan validates migration
+
+**What's apple/container:**
+- Apple's native container runtime (Virtualization.framework)
+- Production-ready for macOS 14+ (Big Sur or later)
+- Requires macOS 14+ and Apple Silicon hardware
+- Better hardware isolation than Docker (kernel-level vs namespace-only)
+
+**What's NOT being done:**
+- Not writing custom init images (not needed)
+- Not building custom kernel modules (not needed for our use case)
+- Not using apple/container-specific features (Rosetta, custom init)
+- Simply mapping Docker commands to apple/container equivalents
+- Testing basic functionality (container starts/stops/exec)
+
+**Key insights from docs:**
+- Containerfile format is 99% compatible with Docker (same FROM, RUN, COPY, CMD)
+- apple/container uses `--detach` flag, Docker uses `-d` (same behavior)
+- apple/container uses `--env KEY=VAL`, Docker uses `-e KEY=VAL` (same format)
+- apple/container uses `--mount type=bind,source=src,target=dst`, Docker uses `-v src:dst` (different syntax but equivalent)
+- apple/container auto-generates unique names (like Docker), we'll need `--name` flag
+- apple/container has `--ssh-agent` flag built-in for SSH socket forwarding (Docker needs manual setup)
+- apple/container uses BuildKit (like Docker), images built same way
+
+**Simplified approach:**
+1. Detect which runtime is available
+2. Use appropriate commands based on detection
+3. Test on Apple Silicon Mac (or document why can't)
+4. Keep Docker as fallback for testing/compatibility
