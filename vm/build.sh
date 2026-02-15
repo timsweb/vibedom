@@ -18,6 +18,8 @@ else
 fi
 
 echo "Building VM image: $IMAGE_NAME (using $RUNTIME)"
-$BUILD_CMD -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
+
+# Add DNS servers to resolve build issues
+$BUILD_CMD --dns 8.8.8.8 --dns 1.1.1.1 -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
 
 echo "✅ VM image built successfully: $IMAGE_NAME:latest"
