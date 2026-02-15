@@ -131,6 +131,27 @@ def test_scrub_preserves_json_structure():
     assert "admin@company.com" not in parsed["user"]
 
 
+def test_scrub_authorization_header():
+    """Should scrub bearer tokens in headers."""
+    scrubber = make_scrubber()
+    text = "Bearer sk_test_4eC39HqLyjWDarjtT1zdp7dc"
+    result = scrubber.scrub(text)
+
+    assert "sk_test_4eC39HqLyjWDarjtT1zdp7dc" not in result.text
+    assert result.was_scrubbed
+
+
+def test_scrub_jwt_token():
+    """Should scrub JWT tokens."""
+    scrubber = make_scrubber()
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+    text = f"Authorization: Bearer {jwt}"
+    result = scrubber.scrub(text)
+
+    assert jwt not in result.text
+    assert result.was_scrubbed
+
+
 def test_scrub_skips_oversized_text():
     """Should skip scrubbing for text exceeding size limit."""
     from dlp_scrubber import MAX_SCRUB_SIZE

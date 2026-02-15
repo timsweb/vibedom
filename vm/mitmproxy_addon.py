@@ -86,12 +86,47 @@ class VibedomProxy:
             return result.text.encode('utf-8'), result.findings
         return content, []
 
+    def _scrub_headers(self, headers) -> list:
+        """Scrub sensitive values from headers.
+
+        Only scrubs header values, not names. Only checks headers
+        likely to contain secrets.
+        """
+        sensitive_headers = {
+            'authorization', 'cookie', 'set-cookie',
+            'x-api-key', 'x-auth-token', 'proxy-authorization',
+        }
+
+        all_findings = []
+        for name in list(headers.keys()):
+            if name.lower() in sensitive_headers:
+                result = self.scrubber.scrub(headers[name])
+                if result.was_scrubbed:
+                    headers[name] = result.text
+                    all_findings.extend(result.findings)
+        return all_findings
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        """Scrub secrets from response bodies."""
+        if not flow.response or not flow.response.content:
+            return
+
+        content_type = flow.response.headers.get('Content-Type', '')
+        scrubbed_content, findings = self._scrub_body(
+            flow.response.content, content_type
+        )
+        if findings:
+            flow.response.content = scrubbed_content
+
     def request(self, flow: http.HTTPFlow) -> None:
         """Intercept, scrub, and filter requests."""
         domain = flow.request.host_header or flow.request.host
 
+        # Scrub sensitive headers
+        header_findings = self._scrub_headers(flow.request.headers)
+        scrubbed_findings = list(header_findings)
+
         # Scrub request body before forwarding
-        scrubbed_findings = []
         if flow.request.content:
             content_type = flow.request.headers.get('Content-Type', '')
             scrubbed_content, findings = self._scrub_body(
@@ -99,7 +134,7 @@ class VibedomProxy:
             )
             if findings:
                 flow.request.content = scrubbed_content
-                scrubbed_findings = findings
+                scrubbed_findings.extend(findings)
 
         # Log request (with scrubbing info)
         self.log_request(flow, allowed=self.is_allowed(domain),
