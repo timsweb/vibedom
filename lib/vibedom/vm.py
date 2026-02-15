@@ -21,6 +21,22 @@ class VMManager:
         self.config_dir = config_dir.resolve()
         self.session_dir = session_dir.resolve() if session_dir else None
         self.container_name = f'vibedom-{workspace.name}'
+        self.runtime, self.runtime_cmd = self._detect_runtime()
+
+    @staticmethod
+    def _detect_runtime() -> tuple[str, str]:
+        """Detect available container runtime.
+
+        Returns:
+            Tuple of (runtime_name, command) — e.g. ('apple', 'container')
+        """
+        if shutil.which('container'):
+            return 'apple', 'container'
+        if shutil.which('docker'):
+            return 'docker', 'docker'
+        raise RuntimeError(
+            "No container runtime found. Install apple/container (macOS 26+) or Docker."
+        )
 
     def start(self) -> None:
         """Start the VM with workspace mounted."""

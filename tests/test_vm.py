@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 import pytest
 import shutil
+from unittest.mock import patch
 from vibedom.vm import VMManager
 from vibedom.session import Session
 
@@ -80,3 +81,28 @@ def test_vm_mounts_session_repo(test_workspace, test_config):
     finally:
         vm.stop()
         shutil.rmtree(session.session_dir, ignore_errors=True)
+
+
+def test_detect_runtime_prefers_apple(test_workspace, test_config):
+    """Should prefer apple/container when available."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+        assert vm.runtime == 'apple'
+        assert vm.runtime_cmd == 'container'
+
+
+def test_detect_runtime_falls_back_to_docker(test_workspace, test_config):
+    """Should fall back to Docker when apple/container not available."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
+        assert vm.runtime == 'docker'
+        assert vm.runtime_cmd == 'docker'
+
+
+def test_detect_runtime_raises_when_neither(test_workspace, test_config):
+    """Should raise RuntimeError when no runtime found."""
+    with patch('shutil.which', return_value=None):
+        with pytest.raises(RuntimeError, match="No container runtime found"):
+            VMManager(test_workspace, test_config)
