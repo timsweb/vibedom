@@ -106,17 +106,62 @@ class VibedomProxy:
                     all_findings.extend(result.findings)
         return all_findings
 
-    def response(self, flow: http.HTTPFlow) -> None:
-        """Scrub secrets from response bodies."""
-        if not flow.response or not flow.response.content:
+    def _format_findings(self, findings: list) -> list[dict]:
+        """Format findings for audit logging with truncated secrets."""
+        return [
+            {
+                'pattern': f.pattern_id,
+                'category': f.category,
+                'original_prefix': f.matched_text[:4] + '***',
+                'original_length': len(f.matched_text),
+                'replaced_with': f.placeholder,
+            }
+            for f in findings
+        ]
+
+    def _log_scrub_event(self, event_type: str, url: str,
+                         findings: list) -> None:
+        """Log a scrubbing event to the network log."""
+        if not findings:
             return
 
-        content_type = flow.response.headers.get('Content-Type', '')
-        scrubbed_content, findings = self._scrub_body(
-            flow.response.content, content_type
-        )
-        if findings:
-            flow.response.content = scrubbed_content
+        entry = {
+            'type': event_type,
+            'url': url,
+            'scrubbed': self._format_findings(findings),
+        }
+
+        try:
+            with open(self.network_log_path, 'a') as f:
+                f.write(json.dumps(entry) + '\n')
+        except OSError as e:
+            print(f"Warning: Failed to log scrub event: {e}",
+                  file=sys.stderr)
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        """Scrub secrets from response bodies and headers."""
+        if not flow.response:
+            return
+
+        all_findings = []
+
+        # Scrub response headers
+        header_findings = self._scrub_headers(flow.response.headers)
+        all_findings.extend(header_findings)
+
+        # Scrub response body
+        if flow.response.content:
+            content_type = flow.response.headers.get('Content-Type', '')
+            scrubbed_content, body_findings = self._scrub_body(
+                flow.response.content, content_type
+            )
+            if body_findings:
+                flow.response.content = scrubbed_content
+                all_findings.extend(body_findings)
+
+        # Log response scrubbing findings
+        self._log_scrub_event('response_scrub',
+                              flow.request.pretty_url, all_findings)
 
     def request(self, flow: http.HTTPFlow) -> None:
         """Intercept, scrub, and filter requests."""
@@ -159,15 +204,7 @@ class VibedomProxy:
         }
 
         if scrubbed:
-            entry['scrubbed'] = [
-                {
-                    'pattern': f.pattern_id,
-                    'category': f.category,
-                    'original': f.matched_text,
-                    'replaced_with': f.placeholder,
-                }
-                for f in scrubbed
-            ]
+            entry['scrubbed'] = self._format_findings(scrubbed)
 
         try:
             with open(self.network_log_path, 'a') as f:

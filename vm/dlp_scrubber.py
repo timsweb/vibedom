@@ -144,7 +144,7 @@ class DLPScrubber:
         # Sort by start position descending (replace right-to-left)
         all_matches.sort(key=lambda m: m[0], reverse=True)
 
-        # Remove overlapping matches (keep longest / leftmost)
+        # Remove overlapping matches (keep rightmost non-overlapping)
         filtered: list[tuple[int, int, Finding, Pattern]] = []
         min_start = len(text)
         for start, end, finding, pattern in all_matches:

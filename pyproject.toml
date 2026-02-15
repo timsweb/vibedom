@@ -25,4 +25,5 @@ where = ["lib"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["vm"]
 python_files = "test_*.py"
