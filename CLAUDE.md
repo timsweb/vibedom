@@ -153,11 +153,11 @@ All features follow TDD:
 - Create wrapper scripts for problematic tools if discovered
 - Most AI agent workflows use standard tools that respect HTTP_PROXY
 
-### Docker Dependency
+### Container Runtime
 
-**Current**: Uses Docker for PoC
+**Current**: Supports both apple/container (preferred) and Docker (fallback). Runtime is auto-detected at startup.
 
-**Future**: Will migrate to `apple/container` (Apple's native container runtime) for better integration with macOS security features
+**Future**: Enhancements to apple/container integration as the platform matures.
 
 ## Testing
 
@@ -302,7 +302,6 @@ docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
 
 ### Phase 3: Production Hardening
 
-- **apple/container migration**: Replace Docker with native macOS containers
 - **Log rotation**: Implement size limits and rotation policies
 - **Multi-tenant support**: Workspace isolation for multiple users
 
@@ -333,7 +332,6 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 - [ ] Type hints on public functions
 - [ ] Docstrings for non-trivial functions
 - [ ] Technical debt documented if deferred
-- [ ] No `--privileged` additions without security review
 
 ### Pull Requests
 
@@ -353,16 +351,13 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ### Known Security Limitations (Phase 1)
 
-- **Privileged mode**: Required for git operations (reduces container isolation)
 - **No egress DLP**: Sensitive data could leak via HTTP/HTTPS requests
 - **Docker dependency**: Relies on Docker daemon security
 - **Proxy bypass**: Tools that don't respect HTTP_PROXY can bypass whitelist (~5%)
 
 ### Future Security Enhancements (Phase 2+)
 
-- Explicit capabilities instead of `--privileged` mode
 - Real-time DLP with Presidio
-- Migration to apple/container for better macOS integration
 - Kernel-level network filtering as fallback for non-proxy-aware tools
 
 ## Support and Documentation
