@@ -38,45 +38,22 @@ Stop: Generate diff, user reviews, optionally applies
 Cleanup: VM destroyed, logs saved
 ```
 
-## DLP (Data Loss Prevention)
+## DLP Runtime Scrubbing
 
-Real-time scrubbing of secrets and PII from HTTP traffic.
+**Threat Model:** Prevent prompt injection attacks from exfiltrating secrets found in workspace to external endpoints.
 
-### Two Enforcement Points
+**What We Scrub:**
+- Request bodies (main exfiltration vector for large secrets like API keys, connection strings)
+- URL query parameters (catches `?api_key=xxx` exfiltration)
 
-```
-Pre-flight (before VM):    Gitleaks binary → scans workspace files
-Runtime (inside VM):       DLP scrubber → scrubs HTTP traffic
-                           ↑ Same gitleaks.toml patterns
-```
+**What We Don't Scrub:**
+- Request headers (needed for legitimate API calls to Anthropic, Context7, etc.)
+- Response bodies (API data entering the VM is not a threat)
 
-### What Gets Scrubbed
-
-**Secrets** (patterns from `lib/vibedom/config/gitleaks.toml`):
-- API keys (AWS, Stripe, OpenAI, GitHub, GitLab, Slack)
-- Database connection strings and passwords
-- Private keys, JWTs, bearer tokens
-
-**PII** (built-in patterns):
-- Email addresses, credit card numbers
-- US Social Security numbers, phone numbers
-- Private IP addresses
-
-### How It Works
-
-1. Agent makes HTTP request with body containing secrets
-2. Mitmproxy addon scrubs request body, response body, and sensitive headers
-3. Secrets replaced with `[REDACTED_PATTERN_NAME]` placeholders
-4. Request forwarded with scrubbed content (agent flow uninterrupted)
-5. All scrubbed findings logged to `network.jsonl` for audit
-
-### Design Decisions
-
-- **Scrub, don't block**: Agent workflow continues uninterrupted
-- **No Presidio**: Custom regex is lighter (0 deps vs 150-500MB) and catches API keys which Presidio cannot
-- **Shared patterns**: gitleaks.toml serves both pre-flight and runtime detection
-- **Content-type aware**: Only scrubs text content (skips binary)
-- **Size-limited**: Skips bodies >512KB for performance
+**Implementation:**
+- Chunked processing for large files (no size bypass)
+- Go/Python regex compatibility warnings
+- Pattern validation on startup
 
 ## Future Enhancements
 
