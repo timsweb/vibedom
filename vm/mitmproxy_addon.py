@@ -86,26 +86,6 @@ class VibedomProxy:
             return result.text.encode('utf-8'), result.findings
         return content, []
 
-    def _scrub_headers(self, headers) -> list:
-        """Scrub sensitive values from headers.
-
-        Only scrubs header values, not names. Only checks headers
-        likely to contain secrets.
-        """
-        sensitive_headers = {
-            'authorization', 'cookie', 'set-cookie',
-            'x-api-key', 'x-auth-token', 'proxy-authorization',
-        }
-
-        all_findings = []
-        for name in list(headers.keys()):
-            if name.lower() in sensitive_headers:
-                result = self.scrubber.scrub(headers[name])
-                if result.was_scrubbed:
-                    headers[name] = result.text
-                    all_findings.extend(result.findings)
-        return all_findings
-
     def _format_findings(self, findings: list) -> list[dict]:
         """Format findings for audit logging with truncated secrets."""
         return [
@@ -139,15 +119,11 @@ class VibedomProxy:
                   file=sys.stderr)
 
     def response(self, flow: http.HTTPFlow) -> None:
-        """Scrub secrets from response bodies and headers."""
+        """Scrub secrets from response bodies."""
         if not flow.response:
             return
 
         all_findings = []
-
-        # Scrub response headers
-        header_findings = self._scrub_headers(flow.response.headers)
-        all_findings.extend(header_findings)
 
         # Scrub response body
         if flow.response.content:
@@ -167,9 +143,7 @@ class VibedomProxy:
         """Intercept, scrub, and filter requests."""
         domain = flow.request.host_header or flow.request.host
 
-        # Scrub sensitive headers
-        header_findings = self._scrub_headers(flow.request.headers)
-        scrubbed_findings = list(header_findings)
+        scrubbed_findings = []
 
         # Scrub request body before forwarding
         if flow.request.content:
