@@ -5,6 +5,7 @@ and provides built-in PII patterns. Zero external dependencies.
 """
 
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,26 +53,46 @@ class DLPScrubber:
     def __init__(self, gitleaks_config: str | None = None):
         self.secret_patterns: list[Pattern] = []
         self.pii_patterns: list[Pattern] = []
+        self.warnings: list[str] = []
 
         if gitleaks_config:
             self._load_gitleaks_patterns(gitleaks_config)
         self._load_pii_patterns()
 
+        if self.warnings:
+            print(f"WARNING: DLP scrubber had {len(self.warnings)} issue(s):", file=sys.stderr)
+            for warning in self.warnings:
+                print(f"  - {warning}", file=sys.stderr)
+
     def _load_gitleaks_patterns(self, config_path: str) -> None:
         """Load secret patterns from gitleaks.toml."""
         path = Path(config_path)
         if not path.exists():
+            self.warnings.append(f"Config file not found: {config_path}")
             return
 
-        with open(path, 'rb') as f:
-            config = tomllib.load(f)
+        try:
+            with open(path, 'rb') as f:
+                config = tomllib.load(f)
+        except Exception as e:
+            self.warnings.append(f"Failed to load config: {e}")
+            return
 
-        for rule in config.get('rules', []):
+        rules = config.get('rules', [])
+        if not rules:
+            self.warnings.append("No rules found in config file")
+            return
+
+        for rule in rules:
             rule_id = rule.get('id', 'unknown')
             try:
                 compiled = re.compile(rule['regex'])
-            except (re.error, KeyError):
-                continue  # Skip invalid patterns
+            except re.error as e:
+                self.warnings.append(f"Rule '{rule_id}': Invalid regex - {e}")
+                continue
+            except KeyError:
+                self.warnings.append(f"Rule '{rule_id}': Missing 'regex' field")
+                continue
 
             placeholder_name = rule_id.upper().replace('-', '_')
             self.secret_patterns.append(Pattern(
@@ -81,6 +102,9 @@ class DLPScrubber:
                 category='SECRET',
                 placeholder=f'[REDACTED_{placeholder_name}]',
             ))
+
+        if len(self.secret_patterns) == 0 and len(rules) > 0:
+            self.warnings.append("All patterns failed to compile - no secrets will be scrubbed!")
 
     def _load_pii_patterns(self) -> None:
         """Load built-in PII detection patterns."""

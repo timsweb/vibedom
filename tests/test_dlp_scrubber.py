@@ -252,3 +252,31 @@ def test_no_false_positive_version_numbers():
 
     assert result.text == text
     assert not result.was_scrubbed
+
+
+def test_warns_on_invalid_regex():
+    """Should warn when config has invalid regex."""
+    from dlp_scrubber import DLPScrubber
+    import sys
+    from io import StringIO
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False) as f:
+        f.write("""
+[[rules]]
+id = "bad-regex"
+description = "Bad regex"
+regex = '''[invalid('''
+""")
+        f.flush()
+
+        old_stderr = sys.stderr
+        sys.stderr = StringIO()
+
+        scrubber = DLPScrubber(gitleaks_config=f.name)
+
+        warning_output = sys.stderr.getvalue()
+        sys.stderr = old_stderr
+
+        assert len(scrubber.warnings) == 2
+        assert any("bad-regex" in w for w in scrubber.warnings)
+        assert "WARNING" in warning_output
