@@ -9,27 +9,41 @@ from typing import Optional
 class VMManager:
     """Manages VM instances for sandbox sessions."""
 
-    def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None):
+    def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None, runtime: Optional[str] = None):
         """Initialize VM manager.
 
         Args:
             workspace: Path to workspace directory
             config_dir: Path to config directory
             session_dir: Path to session directory (for repo mount)
+            runtime: Container runtime ('auto', 'docker', or 'apple'). If None, auto-detects.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
         self.session_dir = session_dir.resolve() if session_dir else None
         self.container_name = f'vibedom-{workspace.name}'
-        self.runtime, self.runtime_cmd = self._detect_runtime()
+        self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
 
     @staticmethod
-    def _detect_runtime() -> tuple[str, str]:
-        """Detect available container runtime.
+    def _detect_runtime(runtime: Optional[str] = None) -> tuple[str, str]:
+        """Detect available container runtime or use specified one.
+
+        Args:
+            runtime: Explicit runtime ('docker' or 'apple'), or None for auto-detect
 
         Returns:
             Tuple of (runtime_name, command) — e.g. ('apple', 'container')
         """
+        if runtime == 'docker':
+            if not shutil.which('docker'):
+                raise RuntimeError("Docker runtime requested but not found on system.")
+            return 'docker', 'docker'
+        if runtime == 'apple':
+            if not shutil.which('container'):
+                raise RuntimeError("apple/container runtime requested but not found on system.")
+            return 'apple', 'container'
+
+        # Auto-detect
         if shutil.which('container'):
             return 'apple', 'container'
         if shutil.which('docker'):

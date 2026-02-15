@@ -108,6 +108,31 @@ def test_detect_runtime_raises_when_neither(test_workspace, test_config):
             VMManager(test_workspace, test_config)
 
 
+def test_explicit_runtime_docker(test_workspace, test_config):
+    """Should use Docker when explicitly specified."""
+    with patch('shutil.which') as mock_which:
+        mock_which.return_value = '/usr/local/bin/docker'
+        vm = VMManager(test_workspace, test_config, runtime='docker')
+        assert vm.runtime == 'docker'
+        assert vm.runtime_cmd == 'docker'
+
+
+def test_explicit_runtime_apple(test_workspace, test_config):
+    """Should use apple/container when explicitly specified."""
+    with patch('shutil.which') as mock_which:
+        mock_which.return_value = '/usr/local/bin/container'
+        vm = VMManager(test_workspace, test_config, runtime='apple')
+        assert vm.runtime == 'apple'
+        assert vm.runtime_cmd == 'container'
+
+
+def test_explicit_runtime_raises_if_not_available(test_workspace, test_config):
+    """Should raise RuntimeError when explicit runtime not found."""
+    with patch('shutil.which', return_value=None):
+        with pytest.raises(RuntimeError, match="Docker runtime requested but not found"):
+            VMManager(test_workspace, test_config, runtime='docker')
+
+
 def test_start_uses_apple_runtime(test_workspace, test_config):
     """start() should use 'container' command when runtime is apple."""
     with patch('shutil.which') as mock_which:

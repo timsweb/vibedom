@@ -57,7 +57,9 @@ def init():
 
 @main.command()
 @click.argument('workspace', type=click.Path(exists=True))
-def run(workspace):
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def run(workspace, runtime):
     """Run AI agent in sandboxed environment."""
     workspace_path = Path(workspace).resolve()
     if not workspace_path.is_dir():
@@ -85,7 +87,7 @@ def run(workspace):
         # Start VM with session directory
         click.echo("🚀 Starting sandbox...")
         config_dir = Path.home() / '.vibedom'
-        vm = VMManager(workspace_path, config_dir, session_dir=session.session_dir)
+        vm = VMManager(workspace_path, config_dir, session_dir=session.session_dir, runtime=runtime if runtime != 'auto' else None)
         vm.start()
 
         session.log_event('VM started successfully')
@@ -109,7 +111,9 @@ def run(workspace):
 
 @main.command()
 @click.argument('workspace', type=click.Path(exists=True), required=False)
-def stop(workspace):
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def stop(workspace, runtime):
     """Stop sandbox and create git bundle.
 
     If workspace provided, stops that specific sandbox.
@@ -118,7 +122,7 @@ def stop(workspace):
     if workspace is None:
         # Stop all vibedom containers
         try:
-            runtime, runtime_cmd = VMManager._detect_runtime()
+            runtime, runtime_cmd = VMManager._detect_runtime(runtime if runtime != 'auto' else None)
         except RuntimeError as e:
             click.secho(f"❌ {e}", fg='red')
             sys.exit(1)
@@ -180,7 +184,7 @@ def stop(workspace):
                     session.session_dir = session_dir
                     break
 
-    vm = VMManager(workspace_path, Path.home() / '.vibedom', session_dir=session.session_dir if session else None)
+    vm = VMManager(workspace_path, Path.home() / '.vibedom', session_dir=session.session_dir if session else None, runtime=runtime if runtime != 'auto' else None)
 
     if session:
         # Create bundle before stopping
