@@ -24,6 +24,18 @@
 
 5. Edit `~/.vibedom/trusted_domains.txt` to add your internal domains
 
+## Container Runtime
+
+Vibedom auto-detects your container runtime:
+
+- **apple/container** (preferred) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container).
+- **Docker** (fallback) — namespace-based containers. Works on any platform.
+
+Before first use with apple/container, start the system service:
+```bash
+container system start
+```
+
 ## Running a Sandbox
 
 ```bash
@@ -39,9 +51,11 @@ This will:
 
 The sandbox is now running. You can:
 
-- Run your AI agent inside the container:
+- Run your AI agent inside the container (use `docker exec` or `container exec` depending on your runtime):
   ```bash
   docker exec -it vibedom-myapp claude-code
+  # or
+  container exec -it vibedom-myapp claude-code
   ```
 
 - Inspect the git repository:

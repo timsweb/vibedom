@@ -269,9 +269,11 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 ### Integration Tests
 
 **Prerequisites**:
-- Docker daemon running
-- Docker Desktop or Colima
+- Container runtime (Docker or apple/container)
+- Docker Desktop/Colima or apple/container installed
 - Sufficient disk space for Alpine image
+
+**Note**: Tests will use whichever runtime is available (prefers apple/container, falls back to Docker).
 
 ```bash
 # Build VM image first
@@ -285,12 +287,18 @@ pytest tests/test_vm.py -v
 ### Manual Testing
 
 ```bash
+# Build image (auto-detects runtime)
+./vm/build.sh
+
 # Test basic workflow
 vibedom run ~/projects/test-workspace
 
-# In container, verify:
+# In container, verify (use docker exec or container exec depending on your runtime):
 docker exec vibedom-<workspace> cat /tmp/.vm-ready
 docker exec vibedom-<workspace> ls /work
+# or
+container exec vibedom-<workspace> cat /tmp/.vm-ready
+container exec vibedom-<workspace> ls /work
 
 # Test HTTPS whitelisting (should succeed if pypi.org is whitelisted)
 docker exec vibedom-<workspace> curl https://pypi.org/simple/

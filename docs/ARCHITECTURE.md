@@ -5,9 +5,27 @@ See [design document](plans/2026-02-13-ai-agent-sandbox-design.md) for full deta
 ## Components
 
 ### VM Layer
-- Alpine Linux on apple/container (Docker for PoC)
-- OverlayFS for read-only workspace with writable overlay
-- iptables for forcing traffic through proxy
+
+#### Container Runtime
+
+Vibedom supports two container runtimes:
+
+| | apple/container | Docker |
+|---|---|---|
+| **Isolation** | Hardware VM (Virtualization.framework) | Namespace-based |
+| **macOS** | 26+ (Tahoe) | Any |
+| **CPU** | Apple Silicon only | Any |
+| **Security** | Full VM isolation per container | Shared kernel |
+| **Status** | Preferred | Fallback |
+
+Runtime is auto-detected at startup. apple/container is preferred when available.
+Both runtimes use the same `Dockerfile.alpine` image.
+
+#### VM Configuration
+- Alpine Linux image
+- Read-only workspace mount at `/mnt/workspace`
+- Git repository at `/work/repo` (mounted from session)
+- Explicit proxy via HTTP_PROXY/HTTPS_PROXY environment variables
 
 ### Network Layer
 - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY)
