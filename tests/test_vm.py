@@ -106,3 +106,43 @@ def test_detect_runtime_raises_when_neither(test_workspace, test_config):
     with patch('shutil.which', return_value=None):
         with pytest.raises(RuntimeError, match="No container runtime found"):
             VMManager(test_workspace, test_config)
+
+
+def test_start_uses_apple_runtime(test_workspace, test_config):
+    """start() should use 'container' command when runtime is apple."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        try:
+            vm.start()
+        except RuntimeError:
+            pass
+
+        calls = mock_run.call_args_list
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        assert run_call[0][0][0] == 'container'
+        assert '--detach' in run_call[0][0]
+        assert '--privileged' not in run_call[0][0]
+
+
+def test_start_uses_docker_runtime(test_workspace, test_config):
+    """start() should use 'docker' command when runtime is docker."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        try:
+            vm.start()
+        except RuntimeError:
+            pass
+
+        calls = mock_run.call_args_list
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        assert run_call[0][0][0] == 'docker'
+        assert '-d' in run_call[0][0]
+        assert '--privileged' not in run_call[0][0]
