@@ -116,11 +116,22 @@ class VMManager:
     def stop(self) -> None:
         """Stop and remove the VM."""
         try:
-            subprocess.run([
-                'docker', 'rm', '-f', self.container_name
-            ], capture_output=True)
-        except subprocess.CalledProcessError:
-            pass  # Container doesn't exist
+            if self.runtime == 'apple':
+                subprocess.run(
+                    ['container', 'stop', self.container_name],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ['container', 'delete', '--force', self.container_name],
+                    capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    ['docker', 'rm', '-f', self.container_name],
+                    capture_output=True,
+                )
+        except FileNotFoundError:
+            pass  # Runtime not installed
 
     def exec(self, command: list[str]) -> subprocess.CompletedProcess:
         """Execute a command inside the VM.
@@ -131,8 +142,10 @@ class VMManager:
         Returns:
             CompletedProcess with stdout/stderr
         """
-        return subprocess.run([
-            'docker', 'exec', self.container_name
-        ] + command, capture_output=True, text=True)
+        return subprocess.run(
+            [self.runtime_cmd, 'exec', self.container_name] + command,
+            capture_output=True,
+            text=True,
+        )
 
     

@@ -146,3 +146,48 @@ def test_start_uses_docker_runtime(test_workspace, test_config):
         assert run_call[0][0][0] == 'docker'
         assert '-d' in run_call[0][0]
         assert '--privileged' not in run_call[0][0]
+
+
+def test_stop_uses_apple_commands(test_workspace, test_config):
+    """stop() should use 'container stop' + 'container delete' for apple runtime."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        vm.stop()
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0][:2] == ['container', 'stop']
+        assert calls[1][:2] == ['container', 'delete']
+
+
+def test_stop_uses_docker_command(test_workspace, test_config):
+    """stop() should use 'docker rm -f' for docker runtime."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        vm.stop()
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0] == ['docker', 'rm', '-f', vm.container_name]
+
+
+def test_exec_uses_detected_runtime(test_workspace, test_config):
+    """exec() should use detected runtime command."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='hello', stderr=''
+        )
+        vm.exec(['echo', 'hello'])
+
+        call_args = mock_run.call_args[0][0]
+        assert call_args[:2] == ['container', 'exec']
