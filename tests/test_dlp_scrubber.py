@@ -164,3 +164,91 @@ def test_scrub_skips_oversized_text():
     # Should return text unchanged (too large to scrub)
     assert result.text == text
     assert not result.was_scrubbed
+
+
+def test_scrub_connection_string():
+    """Should scrub database connection strings."""
+    scrubber = make_scrubber()
+    text = 'DATABASE_URL=postgres://admin:s3cret@db.internal.com:5432/mydb'
+    result = scrubber.scrub(text)
+
+    assert "admin:s3cret@db.internal.com" not in result.text
+    assert result.was_scrubbed
+
+
+def test_scrub_github_token():
+    """Should scrub GitHub personal access tokens."""
+    scrubber = make_scrubber()
+    text = "GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+    result = scrubber.scrub(text)
+
+    assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in result.text
+    assert result.was_scrubbed
+
+
+def test_scrub_credit_card():
+    """Should scrub credit card numbers."""
+    scrubber = make_scrubber()
+    text = "Card: 4111111111111111"
+    result = scrubber.scrub(text)
+
+    assert "4111111111111111" not in result.text
+    assert "[REDACTED_CREDIT_CARD]" in result.text
+
+
+def test_scrub_us_ssn():
+    """Should scrub US Social Security numbers."""
+    scrubber = make_scrubber()
+    text = "SSN: 123-45-6789"
+    result = scrubber.scrub(text)
+
+    assert "123-45-6789" not in result.text
+    assert "[REDACTED_US_SSN]" in result.text
+
+
+def test_scrub_openai_key():
+    """Should scrub OpenAI API keys."""
+    scrubber = make_scrubber()
+    text = "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx"
+    result = scrubber.scrub(text)
+
+    assert "sk-abcdefghijklmnopqrstuvwx" not in result.text
+    assert result.was_scrubbed
+
+
+def test_no_scrub_binary_like_text():
+    """Scrubber should handle unusual but valid text without crashing."""
+    scrubber = make_scrubber()
+    text = "PK\x03\x04 binary-ish but decoded"
+    result = scrubber.scrub(text)
+    assert result.text is not None
+
+
+def test_scrub_form_data():
+    """Should scrub URL-encoded form data."""
+    scrubber = make_scrubber()
+    text = "username=admin&password=SuperSecret123!&email=admin@corp.com"
+    result = scrubber.scrub(text)
+
+    assert "admin@corp.com" not in result.text
+    assert result.was_scrubbed
+
+
+def test_scrub_private_ip():
+    """Should scrub private IP addresses."""
+    scrubber = make_scrubber()
+    text = "server=192.168.1.100 port=5432"
+    result = scrubber.scrub(text)
+
+    assert "192.168.1.100" not in result.text
+    assert "[REDACTED_IPV4_PRIVATE]" in result.text
+
+
+def test_no_false_positive_version_numbers():
+    """Version numbers should NOT be detected as IPs."""
+    scrubber = make_scrubber()
+    text = "version 3.11.4 released"
+    result = scrubber.scrub(text)
+
+    assert result.text == text
+    assert not result.was_scrubbed
