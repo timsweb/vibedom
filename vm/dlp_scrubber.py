@@ -14,6 +14,10 @@ from pathlib import Path
 # Maximum text size to scrub (skip large binary-decoded content)
 MAX_SCRUB_SIZE = 512_000  # 512KB
 
+# Chunking settings for large files
+CHUNK_SIZE = 512_000  # 512KB chunks
+OVERLAP = 2000  # 2KB overlap to catch secrets at boundaries
+
 
 @dataclass
 class Pattern:
@@ -136,8 +140,12 @@ class DLPScrubber:
         Finds all matches, replaces right-to-left to preserve positions,
         and returns scrubbed text with audit trail of findings.
         """
-        if len(text) > MAX_SCRUB_SIZE:
+        if not text:
             return ScrubResult(text=text)
+
+        # Process in chunks for large files
+        if len(text) > MAX_SCRUB_SIZE:
+            return self._scrub_large_text(text)
 
         # Collect all matches across all patterns
         all_matches: list[tuple[int, int, Finding, Pattern]] = []
@@ -187,3 +195,93 @@ class DLPScrubber:
         findings.reverse()
 
         return ScrubResult(text=scrubbed, findings=findings)
+
+    def _scrub_large_text(self, text: str) -> ScrubResult:
+        """Scrub large text by processing in chunks with overlap."""
+        all_findings: list[Finding] = []
+        offset = 0
+
+        while offset < len(text):
+            chunk = text[offset:offset + CHUNK_SIZE + OVERLAP]
+            result = self._scrub_chunk(chunk, offset)
+            all_findings.extend(result.findings)
+            offset += CHUNK_SIZE
+
+        # Deduplicate findings (secrets in overlapping chunks)
+        unique_findings = self._deduplicate_findings(all_findings)
+
+        if not unique_findings:
+            return ScrubResult(text=text)
+
+        # Sort findings by start position descending for replacement
+        unique_findings.sort(key=lambda f: f.start, reverse=True)
+
+        # Replace right-to-left to preserve positions
+        scrubbed = text
+        for finding in unique_findings:
+            scrubbed = (
+                scrubbed[:finding.start] +
+                finding.placeholder +
+                scrubbed[finding.end:]
+            )
+
+        # Reverse findings so they're in left-to-right order
+        unique_findings.reverse()
+
+        return ScrubResult(text=scrubbed, findings=unique_findings)
+
+    def _scrub_chunk(self, chunk: str, offset: int) -> ScrubResult:
+        """Scrub a single chunk and return findings with absolute positions."""
+        all_matches: list[tuple[int, int, Finding, Pattern]] = []
+
+        for pattern in self.secret_patterns + self.pii_patterns:
+            for match in pattern.regex.finditer(chunk):
+                if match.lastindex:
+                    start, end = match.start(1), match.end(1)
+                    matched_text = match.group(1)
+                else:
+                    start, end = match.start(), match.end()
+                    matched_text = match.group()
+
+                finding = Finding(
+                    pattern_id=pattern.id,
+                    category=pattern.category,
+                    matched_text=matched_text,
+                    start=start + offset,
+                    end=end + offset,
+                    placeholder=pattern.placeholder,
+                )
+                all_matches.append((start + offset, end + offset, finding, pattern))
+
+        if not all_matches:
+            return ScrubResult(text=chunk)
+
+        # Sort, filter overlaps, replace (same logic as original scrub)
+        all_matches.sort(key=lambda m: m[0], reverse=True)
+
+        filtered: list[tuple[int, int, Finding, Pattern]] = []
+        min_start = len(chunk) + offset
+        for start, end, finding, pattern in all_matches:
+            if end <= min_start:
+                filtered.append((start, end, finding, pattern))
+                min_start = start
+
+        chunk_scrubbed = chunk
+        findings = []
+        for start, end, finding, pattern in filtered:
+            chunk_scrubbed = chunk_scrubbed[:start - offset] + pattern.placeholder + chunk_scrubbed[end - offset:]
+            findings.append(finding)
+
+        findings.reverse()
+        return ScrubResult(text=chunk_scrubbed, findings=findings)
+
+    def _deduplicate_findings(self, findings: list[Finding]) -> list[Finding]:
+        """Remove duplicate findings from overlapping chunks."""
+        seen = set()
+        unique = []
+        for f in findings:
+            key = (f.pattern_id, f.start, f.end)
+            if key not in seen:
+                seen.add(key)
+                unique.append(f)
+        return unique

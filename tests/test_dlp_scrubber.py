@@ -152,18 +152,25 @@ def test_scrub_jwt_token():
     assert result.was_scrubbed
 
 
-def test_scrub_skips_oversized_text():
-    """Should skip scrubbing for text exceeding size limit."""
-    from dlp_scrubber import MAX_SCRUB_SIZE
+def test_scrubs_large_file_in_chunks():
+    """Should scrub large files by processing in chunks."""
+    from dlp_scrubber import DLPScrubber
 
     scrubber = make_scrubber()
-    # Create text larger than MAX_SCRUB_SIZE
-    text = "admin@company.com " * (MAX_SCRUB_SIZE // 10)
-    result = scrubber.scrub(text)
 
-    # Should return text unchanged (too large to scrub)
-    assert result.text == text
-    assert not result.was_scrubbed
+    # Create text with secret in middle of 1MB string
+    # Use space-separated parts to ensure word boundaries match
+    prefix = 'A ' * 250_000  # 500KB before (each 'A ' is 2 chars)
+    secret = 'AKIAIOSFODNN7EXAMPLE'
+    suffix = 'A ' * 250_000  # 500KB after
+    large_text = prefix + ' ' + secret + ' ' + secret + ' ' + suffix
+
+    result = scrubber.scrub(large_text)
+
+    # Should scrub secret even though file >512KB
+    assert secret not in result.text
+    assert '[REDACTED_AWS_ACCESS_KEY]' in result.text
+    assert result.was_scrubbed
 
 
 def test_scrub_connection_string():
