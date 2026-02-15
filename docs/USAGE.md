@@ -233,6 +233,54 @@ Vibedom uses mitmproxy in explicit proxy mode with HTTP_PROXY/HTTPS_PROXY enviro
 - Java applications: May need -Dhttp.proxyHost/-Dhttp.proxyPort
 - Custom binaries: Check tool documentation for proxy support
 
+## Data Loss Prevention (DLP)
+
+Vibedom automatically scrubs secrets and PII from HTTP traffic to prevent data exfiltration.
+
+### What Gets Scrubbed
+
+| Category | Examples | Replaced With |
+|----------|----------|---------------|
+| AWS Keys | `AKIAIOSFODNN7EXAMPLE` | `[REDACTED_AWS_ACCESS_KEY]` |
+| API Keys | `sk_test_...`, `sk-proj-...` | `[REDACTED_STRIPE_API_KEY]` etc. |
+| Tokens | `ghp_...`, `glpat-...` | `[REDACTED_GITHUB_PAT]` etc. |
+| Passwords | `password=secret123` | `[REDACTED_GENERIC_PASSWORD]` |
+| Private Keys | `-----BEGIN RSA PRIVATE KEY-----` | `[REDACTED_PRIVATE_KEY]` |
+| Emails | `user@company.com` | `[REDACTED_EMAIL]` |
+| Credit Cards | `4111111111111111` | `[REDACTED_CREDIT_CARD]` |
+
+### How It Works
+
+- Requests are **scrubbed, not blocked** — the agent continues working normally
+- Only text-based content is scrubbed (JSON, form data, plain text)
+- Binary content (images, archives) passes through unchanged
+- All scrubbed items are logged for audit
+
+### Viewing Scrubbed Activity
+
+```bash
+# View all requests where scrubbing occurred
+cat ~/.vibedom/logs/session-*/network.jsonl | python3 -c "
+import sys, json
+for line in sys.stdin:
+    entry = json.loads(line)
+    if 'scrubbed' in entry:
+        print(json.dumps(entry, indent=2))
+"
+```
+
+### Adding Custom Secret Patterns
+
+Edit `lib/vibedom/config/gitleaks.toml` to add patterns. The same file is used for both pre-flight scanning (Gitleaks) and runtime scrubbing (DLP):
+
+```toml
+[[rules]]
+id = "my-internal-token"
+description = "Internal Service Token"
+regex = '''myco_token_[a-zA-Z0-9]{32}'''
+tags = ["internal", "token"]
+```
+
 ## Troubleshooting
 
 ### "Domain not whitelisted"

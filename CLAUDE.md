@@ -22,6 +22,7 @@
    - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
    - Domain whitelist enforcement with subdomain support
    - Supports both HTTP and HTTPS traffic
+   - DLP scrubber for secret and PII detection in HTTP traffic
    - Logs all requests to `network.jsonl`
 
 3. **Secret Detection** (`lib/vibedom/gitleaks.py`)
@@ -293,10 +294,11 @@ docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
 
 ### Phase 2: DLP and Monitoring
 
-- **Presidio integration**: Real-time PII detection and scrubbing
-- **Context-aware scrubbing**: Maintain code semantics while removing sensitive data
-- **High-severity alerting**: Real-time notifications for critical findings
-- **Metrics and dashboards**: Prometheus integration for monitoring
+- **DLP scrubbing**: Real-time secret and PII scrubbing in HTTP traffic
+- **Shared patterns**: gitleaks.toml serves pre-flight scan + runtime DLP
+- **Audit logging**: Scrubbed findings logged to network.jsonl
+- Context-aware scrubbing
+- High-severity alerting
 
 ### Phase 3: Production Hardening
 
