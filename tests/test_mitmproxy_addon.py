@@ -47,3 +47,22 @@ def test_request_headers_pass_through(mock_mkdir):
 
     # Authorization header should still be present
     assert flow.request.headers.get("Authorization") == "Bearer sk-ant-api123"
+
+
+@patch('pathlib.Path.mkdir')
+def test_response_body_not_scrubbed(mock_mkdir):
+    """Should not scrub response bodies (not needed for our threat model)."""
+    from mitmproxy_addon import VibedomProxy
+
+    proxy = VibedomProxy()
+
+    flow = Mock(spec=http.HTTPFlow)
+    flow.response = Mock()
+    flow.response.content = b'{"api_key": "AKIAIOSFODNN7EXAMPLE"}'
+    flow.response.headers = {"Content-Type": "application/json"}
+
+    # response() method should not exist - responses pass through unmodified
+    assert not hasattr(proxy, 'response')
+
+    # Response content should remain unchanged (no scrubbing)
+    assert flow.response.content == b'{"api_key": "AKIAIOSFODNN7EXAMPLE"}'
