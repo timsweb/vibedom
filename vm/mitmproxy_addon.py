@@ -37,7 +37,8 @@ class VibedomProxy:
 
     def __init__(self):
         self.whitelist = self.load_whitelist()
-        self.network_log_path = Path('/var/log/vibedom/network.jsonl')
+        # Write to session directory instead of container-local /var/log
+        self.network_log_path = Path('/mnt/session/network.jsonl')
         self.network_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Initialize DLP scrubber
