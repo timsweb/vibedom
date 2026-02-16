@@ -234,5 +234,36 @@ def stop(workspace, runtime):
         vm.stop()
         click.echo("✅ Container stopped")
 
+
+@main.command('reload-whitelist')
+@click.argument('workspace', type=click.Path(exists=True))
+def reload_whitelist(workspace: str) -> None:
+    """Reload domain whitelist without restarting container.
+
+    After editing ~/.vibedom/config/trusted_domains.txt, use this command
+    to reload the whitelist in the running container.
+    """
+    workspace_path = Path(workspace).resolve()
+    container_name = f'vibedom-{workspace_path.name}'
+
+    try:
+        runtime, runtime_cmd = VMManager._detect_runtime()
+    except RuntimeError as e:
+        click.secho(f"❌ {e}", fg='red')
+        sys.exit(1)
+
+    # Send SIGHUP to mitmdump process
+    result = subprocess.run(
+        [runtime_cmd, 'exec', container_name, 'pkill', '-HUP', 'mitmdump'],
+        capture_output=True, text=True
+    )
+
+    if result.returncode == 0:
+        click.echo(f"✅ Reloaded whitelist for {workspace_path.name}")
+    else:
+        click.secho(f"❌ Failed to reload: {result.stderr}", fg='red')
+        sys.exit(1)
+
+
 if __name__ == '__main__':
     main()
