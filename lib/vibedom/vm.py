@@ -98,6 +98,21 @@ class VMManager:
             cmd += ['-v', f'{repo_dir}:/work/repo']
             cmd += ['-v', f'{self.session_dir}:/mnt/session']
 
+        # Claude Code config files (read-only)
+        claude_home = Path.home() / '.claude'
+        if claude_home.exists():
+            # Mount API key if exists
+            if (claude_home / 'api_key').exists():
+                cmd += ['-v', f'{claude_home / "api_key"}:/root/.claude/api_key:ro']
+
+            # Mount settings if exists
+            if (claude_home / 'settings.json').exists():
+                cmd += ['-v', f'{claude_home / "settings.json"}:/root/.claude/settings.json:ro']
+
+            # Mount skills directory if exists
+            if (claude_home / 'skills').is_dir():
+                cmd += ['-v', f'{claude_home / "skills"}:/root/.claude/skills:ro']
+
         cmd.append('vibedom-alpine:latest')
 
         # Start container
