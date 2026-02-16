@@ -237,7 +237,9 @@ def stop(workspace, runtime):
 
 @main.command('reload-whitelist')
 @click.argument('workspace', type=click.Path(exists=True))
-def reload_whitelist(workspace: str) -> None:
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']), default='auto',
+              help='Container runtime to use (auto-detects by default)')
+def reload_whitelist(workspace: str, runtime: str) -> None:
     """Reload domain whitelist without restarting container.
 
     After editing ~/.vibedom/config/trusted_domains.txt, use this command
@@ -246,11 +248,17 @@ def reload_whitelist(workspace: str) -> None:
     workspace_path = Path(workspace).resolve()
     container_name = f'vibedom-{workspace_path.name}'
 
-    try:
-        runtime, runtime_cmd = VMManager._detect_runtime()
-    except RuntimeError as e:
-        click.secho(f"❌ {e}", fg='red')
-        sys.exit(1)
+    # Determine runtime command
+    if runtime == 'auto':
+        try:
+            detected_runtime, runtime_cmd = VMManager._detect_runtime()
+        except RuntimeError as e:
+            click.secho(f"❌ {e}", fg='red')
+            sys.exit(1)
+    elif runtime == 'docker':
+        runtime_cmd = 'docker'
+    elif runtime == 'apple':
+        runtime_cmd = 'container'
 
     # Send SIGHUP to mitmdump process
     result = subprocess.run(
