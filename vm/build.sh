@@ -52,11 +52,7 @@ fi
 
 echo "Building VM image: $IMAGE_NAME (using $RUNTIME)"
 
-# Build with explicit DNS for Docker (workaround for DNS issues)
-if [ "$RUNTIME" = "docker" ]; then
-    $BUILD_CMD --dns 8.8.8.8 --dns 1.1.1.1 -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
-else
-    $BUILD_CMD -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
-fi
+# Build image (same command for both runtimes)
+$BUILD_CMD -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
 
 echo "✅ VM image built successfully: $IMAGE_NAME:latest"
