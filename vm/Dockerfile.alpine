@@ -18,6 +18,16 @@ RUN apk add --no-cache \
     ca-certificates-bundle \
     mitmproxy
 
+# Install Claude Code dependencies (Alpine/musl requirements)
+RUN apk add --no-cache libgcc libstdc++ ripgrep
+
+# Install Claude Code CLI (goes to /root/.claude/bin/claude)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Configure for Alpine compatibility
+ENV USE_BUILTIN_RIPGREP=0
+ENV PATH="/root/.claude/bin:$PATH"
+
 # Create directories
 RUN mkdir -p /mnt/workspace /work /mnt/config /var/log/vibedom
 
