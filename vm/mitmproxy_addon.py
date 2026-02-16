@@ -1,6 +1,7 @@
 """Mitmproxy addon for enforcing whitelist and DLP scrubbing."""
 
 import json
+import signal
 import sys
 from pathlib import Path
 
@@ -46,6 +47,9 @@ class VibedomProxy:
         config_path = str(gitleaks_config) if gitleaks_config.exists() else None
         self.scrubber = DLPScrubber(gitleaks_config=config_path)
 
+        # Register SIGHUP handler for whitelist reload
+        signal.signal(signal.SIGHUP, self._reload_whitelist)
+
     def load_whitelist(self) -> set:
         """Load whitelist from mounted config."""
         whitelist_path = Path('/mnt/config/trusted_domains.txt')
@@ -59,6 +63,11 @@ class VibedomProxy:
                 if line and not line.startswith('#'):
                     domains.add(line.lower())
         return domains
+
+    def _reload_whitelist(self, signum, frame):
+        """Reload whitelist when SIGHUP received."""
+        self.whitelist = self.load_whitelist()
+        print(f"Reloaded whitelist: {len(self.whitelist)} domains", file=sys.stderr)
 
     def is_allowed(self, domain: str) -> bool:
         """Check if domain is whitelisted."""
