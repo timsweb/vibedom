@@ -127,8 +127,8 @@ class VMManager:
                 f"Container command '{self.runtime_cmd}' not found."
             ) from None
 
-        # Wait for VM to be ready
-        for _ in range(10):
+        # Wait for VM to be ready (increased timeout for git cloning)
+        for _ in range(60):
             result = subprocess.run(
                 [self.runtime_cmd, 'exec', self.container_name,
                  'test', '-f', '/tmp/.vm-ready'],
@@ -139,7 +139,7 @@ class VMManager:
                 return
             time.sleep(1)
         raise RuntimeError(
-            f"VM '{self.container_name}' failed to become ready within 10 seconds"
+            f"VM '{self.container_name}' failed to become ready within 60 seconds"
         )
 
     def stop(self) -> None:
