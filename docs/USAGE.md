@@ -49,14 +49,43 @@ This will:
 4. Clone/create git repository in isolated session
 5. Launch mitmproxy
 
-The sandbox is now running. You can:
+The sandbox is now running.
 
-- Run your AI agent inside the container (use `docker exec` or `container exec` depending on your runtime):
-  ```bash
-  docker exec -it vibedom-myapp claude-code
-  # or
-  container exec -it vibedom-myapp claude-code
-  ```
+## Using Claude Code
+
+Claude Code CLI is pre-installed in the container image and your settings/authentication persist across sessions via a shared Docker volume.
+
+**First time setup (per container runtime):**
+
+1. Exec into the container:
+   ```bash
+   docker exec -it vibedom-myapp sh
+   # or with apple/container:
+   container exec -it vibedom-myapp sh
+   ```
+
+2. Authenticate Claude:
+   ```bash
+   cd /work/repo
+   claude
+   ```
+
+3. Follow the OAuth flow to authenticate. Your authentication and settings will persist across all vibedom containers.
+
+**Subsequent sessions:**
+
+Claude will already be authenticated - just exec in and run:
+```bash
+docker exec -it vibedom-myapp sh -c "cd /work/repo && claude"
+# or
+container exec -it vibedom-myapp sh -c "cd /work/repo && claude"
+```
+
+**Note:** The first Claude Code installation generates OAuth credentials that persist in the `vibedom-claude-config` Docker volume, shared across all workspaces.
+
+## Other Operations
+
+You can also:
 
 - Inspect the git repository:
   ```bash
@@ -221,6 +250,23 @@ github.com
 gitlab.com
 ```
 
+### Reloading Whitelist
+
+After editing the whitelist, you can reload it without restarting the container:
+
+```bash
+vibedom reload-whitelist ~/projects/myapp
+```
+
+The command auto-detects your container runtime, or you can specify it explicitly:
+
+```bash
+vibedom reload-whitelist ~/projects/myapp --runtime docker
+vibedom reload-whitelist ~/projects/myapp --runtime apple
+```
+
+This sends a SIGHUP signal to mitmproxy, triggering it to reload the whitelist from `/mnt/config/trusted_domains.txt`.
+
 ### Testing Network Access
 
 ```bash
@@ -272,7 +318,11 @@ Add the domain to `~/.vibedom/trusted_domains.txt`:
 echo "new-domain.com" >> ~/.vibedom/trusted_domains.txt
 ```
 
-Then restart the sandbox.
+Then reload the whitelist:
+
+```bash
+vibedom reload-whitelist ~/projects/myapp
+```
 
 ### "Gitleaks found secrets"
 

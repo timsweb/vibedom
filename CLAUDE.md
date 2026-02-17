@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, git bundle workflow, secret detection)
+**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, git bundle workflow, secret detection). Usability improvements complete (Claude Code persistence, whitelist reload).
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -13,17 +13,19 @@
 ### Core Components
 
 1. **VM Isolation** (`lib/vibedom/vm.py`)
-    - Docker-based PoC (will migrate to `apple/container` in production)
+    - Supports both apple/container (preferred) and Docker (fallback)
     - Read-only workspace mount at `/mnt/workspace`
     - Git repository at `/work/repo` (mounted from session)
+    - Claude Code CLI pre-installed with persistent config volume
     - Health check polling for VM readiness
 
 2. **Network Control** (`vm/mitmproxy_addon.py`, `vm/startup.sh`)
    - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
    - Domain whitelist enforcement with subdomain support
+   - Whitelist reload via SIGHUP (no container restart required)
    - Supports both HTTP and HTTPS traffic
    - DLP scrubber for secret and PII detection in HTTP traffic
-   - Logs all requests to `network.jsonl`
+   - Logs all requests to session directory (`network.jsonl`)
 
 3. **Secret Detection** (`lib/vibedom/gitleaks.py`)
    - Pre-flight Gitleaks scan before VM starts
@@ -40,6 +42,7 @@
    - `vibedom stop <workspace>` - Stop specific sandbox
    - `vibedom stop` - Stop all vibedom containers
    - `vibedom init` - First-time setup (SSH keys, whitelist)
+   - `vibedom reload-whitelist <workspace>` - Reload whitelist without restart
 
 ### Key Design Decisions
 
@@ -157,6 +160,8 @@ All features follow TDD:
 
 **Current**: Supports both apple/container (preferred) and Docker (fallback). Runtime is auto-detected at startup.
 
+**Claude Code Persistence**: Uses a shared Docker volume (`vibedom-claude-config`) to persist authentication and settings across all workspaces.
+
 **Future**: Enhancements to apple/container integration as the platform matures.
 
 ## Testing
@@ -266,6 +271,9 @@ vibedom stop ~/projects/myapp
 # Stop all
 vibedom stop
 
+# Reload whitelist
+vibedom reload-whitelist ~/projects/myapp
+
 # View logs
 ls ~/.vibedom/logs/
 cat ~/.vibedom/logs/session-*/session.log
@@ -374,6 +382,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-02-14 (git bundle workflow implemented)
-**Status**: HTTP/HTTPS whitelisting working, git bundle workflow complete, Phase 1 complete
+**Last Updated**: 2026-02-17 (usability improvements complete)
+**Status**: Claude Code persistence, whitelist reload, apple/container support complete
 **Next Milestone**: Phase 2 - DLP integration and monitoring
