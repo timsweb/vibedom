@@ -98,10 +98,8 @@ class VMManager:
             cmd += ['-v', f'{repo_dir}:/work/repo']
             cmd += ['-v', f'{self.session_dir}:/mnt/session']
 
-        # Claude Code config directory (writable for history, cache, etc.)
-        claude_home = Path.home() / '.claude'
-        if claude_home.exists():
-            cmd += ['-v', f'{claude_home}:/root/.claude']
+        # Claude/OpenCode config - shared persistent volume across all workspaces
+        cmd += ['-v', 'vibedom-claude-config:/root/.claude']
 
         cmd.append('vibedom-alpine:latest')
 
