@@ -23,3 +23,9 @@ env/
 
 # Vibedom
 .vibedom/
+
+# Claude Code local state
+.claude/
+
+# Not a Node.js project
+package-lock.json
