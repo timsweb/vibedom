@@ -42,6 +42,14 @@ git config user.email "agent@vibedom.local"
 
 echo "Git repository initialized at /work/repo"
 
+# Link Claude state file so it persists in volume
+# Claude writes to both /root/.claude.json and /root/.claude/.claude.json
+# Only /root/.claude/ is in the persistent volume, so symlink to persist state
+if [ ! -L /root/.claude.json ]; then
+    ln -sf /root/.claude/.claude.json /root/.claude.json
+    echo "Created symlink for Claude state persistence"
+fi
+
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
     eval $(ssh-agent -s)
