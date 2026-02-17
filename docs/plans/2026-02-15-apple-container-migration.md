@@ -2,239 +2,91 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Migrate from Docker to Apple's container runtime (apple/container) for better hardware isolation and macOS security integration.
+**Goal:** Add apple/container as the preferred container runtime, with Docker as fallback, so vibedom uses hardware-isolated VMs on supported Macs.
 
-**Architecture:** Replace Docker CLI commands with apple/container equivalents in vm.py, convert Dockerfile.alpine to Containerfile format, update documentation to reflect changes. Keep Docker as fallback for compatibility.
+**Architecture:** Extract container commands behind a runtime abstraction in `vm.py`. Detect which runtime is available (prefer apple/container, fall back to Docker). Both runtimes use the same `Dockerfile.alpine` image — no rename needed. The CLI's `stop --all` also needs runtime awareness.
 
-**Tech Stack:** apple/container CLI (0.9.0+), Containerfile format, Alpine Linux ARM64
+**Tech Stack:** apple/container CLI (0.9.0+), Docker CLI (fallback), Alpine Linux ARM64
 
-**What's Apple/Container:**
-- Apple's native container runtime built on Virtualization.framework
-- Better hardware isolation than Docker namespaces
-- Deeper macOS security integration
-- Requires macOS 14+ (Big Sur or later)
-- **Containerfile format is compatible** with Docker (same FROM, RUN, COPY, CMD)
-- **CLI commands differ**: `container run` vs `docker run`, `container exec` vs `docker exec`
-- **Mount syntax differs**: `--mount type=bind,source=src,target=dst` vs `-v src:dst`
-- **Container name**: auto-assigned by apple/container, Docker needs `--name`
-- **Key insight**: Migration is mostly command translation, not Containerfile complexity
-
----
-
-## Task 1: Create Containerfile from Dockerfile
-
-**Files:**
-- Create: `docs/plans/2026-02-15-apple-container-research.md`
-
-**Step 1: Document key Docker → apple/container command mappings**
-
-Create research document with mapping:
-
-```markdown
-# Docker to Apple/Container Command Mapping
-
-| Docker | apple/container | Usage |
-|--------|----------------|--------|
-| `docker build` | `container build` | Build images |
-| `docker run -d` | `container run -d` | Start container (detached) |
-| `docker run -it` | `container run -it` | Start container (interactive) |
-| `docker exec` | `container exec` | Run command in container |
-| `docker ps` | `container list` | List containers |
-| `docker rm -f` | `container rm` | Remove container |
-| `docker logs` | `container logs` | View logs |
-| `docker cp` | `container cp` | Copy files to/from container |
-
-**Flag Differences:**
-| Docker | apple/container | Notes |
-|--------|----------------|-------|
-| `-d` | `--detach` | Different flag name |
-| `-e KEY=VAL` | `--env KEY=VAL` | Same |
-| `-v src:dst` | `--mount type=bind,source=src,target=dst` | Different mount syntax |
-| `-it` | `-i` + `-t` | Same behavior, split flags |
-| `--name <name>` | `--name <name>` | Same |
-```
-
-**Step 2: Document Containerfile format differences**
-
-```markdown
-# Containerfile Format vs Dockerfile
-
-**Similarities:**
-- Same base image syntax
-- Same FROM, RUN, COPY, CMD directives
-- Same ENV variable format
-
-**Differences:**
-- Dockerfile uses `Dockerfile`, Containerfile uses `Containerfile`
-- Containerfile uses apple/container-specific features if needed
-- BuildKit vs BuildKit compatibility
-
-**Dockerfile.alpine → Containerfile conversion needed:**
-- Line 1: `FROM alpine:latest` → `FROM alpine:latest` (same)
-- Lines 4-16: `RUN apk add` → `RUN apk add` (same)
-- Line 19: `RUN mkdir` → `RUN mkdir` (same)
-- Line 22: `COPY startup.sh` → `COPY startup.sh` (same)
-- Line 23: `RUN chmod` → `RUN chmod` (same)
-- Line 25: `CMD` → `CMD` (same)
-
-**Conversion:** Just rename Dockerfile.alpine → Containerfile
-```
-
-**Step 3: Document key considerations**
-
-```markdown
-# Migration Considerations
-
-**Platform Specifics:**
-- Apple Silicon (arm64) - Already using Alpine:latest which supports ARM64
-- apple/container requires macOS 14+ (Big Sur or later)
-- Virtualization.framework integration (hardware isolation benefits)
-
-**Testing Requirements:**
-- Must test on Apple Silicon Mac
-- Verify container starts and stops correctly
-- Verify mounts work (read-only workspace, writable overlay)
-- Verify mitmproxy runs and scrubs correctly
-- Verify SSH agent and git operations work
-
-**Potential Issues:**
-- apple/container CLI may have subtle differences from Docker
-- Mount syntax changes (`-v src:dst` → `--mount type=bind,source=src,target=dst`)
-- May need to adjust for apple/container-specific features
-- Image build may behave differently
-
-**Rollback Strategy:**
-- Keep Docker-based implementation in `vm.py.docker` for fallback
-- Add feature flag: `--container-runtime {docker|apple}` to choose
-- Default to Docker initially, switch to apple/container after testing
-```
-
-**Step 4: Write research document**
-
-Create file with all documentation from steps 1-3.
-
-**Step 5: Commit research**
-
-```bash
-git add docs/plans/2026-02-15-apple-container-research.md
-git commit -m "docs: document apple/container API and migration research"
-```
+**Key facts about apple/container** (from [docs](https://github.com/apple/container)):
+- Requires **macOS 26** (Tahoe) for full functionality. Limited support on macOS 15.
+- Requires **Apple Silicon**.
+- Uses lightweight VM per container (Virtualization.framework) — true hardware isolation.
+- CLI: `container run`, `container exec`, `container stop`, `container delete`
+- `container build` reads **`Dockerfile` first**, falls back to `Containerfile`. No rename needed.
+- Mount syntax: `--volume src:dst` or `--mount type=bind,source=src,target=dst,readonly`
+- Env vars: `-e KEY=VAL` (same as Docker)
+- Detach: `--detach` (Docker uses `-d`, but also accepts `--detach`)
+- Name: `--name <name>` (same as Docker)
+- **No `--privileged` flag** — not needed since we dropped overlay FS for git workflow.
+- Requires `container system start` before first use (launch agent).
+- Stop: `container stop <name>`, Remove: `container delete --force <name>` (not `rm`).
+- List: `container list --filter name=vibedom-` or `container list --all`.
 
 ---
 
-## Task 2: Update VM Manager for apple/container Commands
-
----
-
-## Task 3: Update Documentation
-
----
-
-**Files:**
-- Create: `vm/Containerfile`
-
-**Step 1: Write Containerfile**
-
-Create `vm/Containerfile`:
-
-```dockerfile
-FROM alpine:latest
-
-# Install required packages
-RUN apk add --no-cache \
-    bash \
-    openssh \
-    git \
-    python3 \
-    py3-pip \
-    curl \
-    sudo \
-    rsync \
-    diffutils \
-    ca-certificates \
-    ca-certificates-bundle \
-    mitmproxy
-
-# Create directories
-RUN mkdir -p /mnt/workspace /work /mnt/config /var/log/vibedom
-
-# Add startup script
-COPY startup.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/startup.sh
-
-CMD ["/usr/local/bin/startup.sh"]
-```
-
-**Step 2: Test local build**
-
-```bash
-# Try building with apple/container
-container build -t vibedom-container:latest -f vm/Containerfile
-
-# Also verify it works
-container images | grep vibedom-container
-```
-
-**Step 3: Update build.sh**
-
-Modify `vm/build.sh` to support both Docker and apple/container:
-
-```bash
-#!/bin/bash
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="vibedom-container"
-
-# Detect container runtime
-if command -v container &>/dev/null; then
-    RUNTIME="apple"
-    BUILD_CMD="container build"
-    RUN_OPTS=""
-elif command -v docker &>/dev/null; then
-    RUNTIME="docker"
-    BUILD_CMD="docker build"
-    RUN_OPTS=""
-else
-    echo "Error: Neither container nor docker found"
-    exit 1
-fi
-
-echo "Building VM image: $IMAGE_NAME (using $RUNTIME)"
-$BUILD_CMD $BUILD_OPTS -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Containerfile"
-
-echo "✅ VM image built successfully: $IMAGE_NAME:latest"
-echo ""
-if [ "$RUNTIME" = "apple" ]; then
-    echo "Using apple/container for better hardware isolation"
-else
-    echo "Note: For production, Docker is recommended for consistency"
-fi
-```
-
-**Step 4: Commit Containerfile and build changes**
-
-```bash
-git add vm/Containerfile vm/build.sh
-git commit -m "feat: add Containerfile and apple/container build support"
-```
-
----
-
-## Task 3: Update VM Manager for apple/container Commands
+### Task 1: Add Container Runtime Abstraction to VMManager
 
 **Files:**
 - Modify: `lib/vibedom/vm.py`
+- Modify: `tests/test_vm.py`
 
-**Step 1: Update container runtime detection**
+**Context:** Currently `vm.py` hardcodes `docker` in every subprocess call. We need a runtime abstraction that picks the right command and flags. The key differences are:
+- Docker: `docker rm -f` → apple/container: `container stop` + `container delete --force`
+- Docker: `-d` → apple/container: `--detach`
+- Docker: `--privileged` → apple/container: not needed (drop it for both runtimes — the git workflow doesn't need it)
+- Docker: `-v src:dst:ro` → apple/container: `--volume src:dst:ro` (same syntax, different flag name also works)
 
-Add method to detect container runtime:
+**Step 1: Write failing test for runtime detection**
+
+Add to `tests/test_vm.py`:
 
 ```python
+from unittest.mock import patch
+
+def test_detect_runtime_prefers_apple(test_workspace, test_config):
+    """Should prefer apple/container when available."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+        assert vm.runtime == 'apple'
+        assert vm.runtime_cmd == 'container'
+
+
+def test_detect_runtime_falls_back_to_docker(test_workspace, test_config):
+    """Should fall back to Docker when apple/container not available."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
+        assert vm.runtime == 'docker'
+        assert vm.runtime_cmd == 'docker'
+
+
+def test_detect_runtime_raises_when_neither(test_workspace, test_config):
+    """Should raise RuntimeError when no runtime found."""
+    with patch('shutil.which', return_value=None):
+        with pytest.raises(RuntimeError, match="No container runtime found"):
+            VMManager(test_workspace, test_config)
+```
+
+**Step 2: Run tests to verify they fail**
+
+Run: `source .venv/bin/activate && pytest tests/test_vm.py::test_detect_runtime_prefers_apple tests/test_vm.py::test_detect_runtime_falls_back_to_docker tests/test_vm.py::test_detect_runtime_raises_when_neither -v`
+Expected: FAIL (no `runtime` attribute on VMManager)
+
+**Step 3: Implement runtime detection**
+
+Replace the `VMManager.__init__` and add `_detect_runtime` in `lib/vibedom/vm.py`:
+
+```python
+"""VM lifecycle management."""
+
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional
+
 
 class VMManager:
     """Manages VM instances for sandbox sessions."""
@@ -251,584 +103,638 @@ class VMManager:
         self.config_dir = config_dir.resolve()
         self.session_dir = session_dir.resolve() if session_dir else None
         self.container_name = f'vibedom-{workspace.name}'
+        self.runtime, self.runtime_cmd = self._detect_runtime()
 
-        # Detect container runtime
-        self.container_runtime = self._detect_container_runtime()
+    @staticmethod
+    def _detect_runtime() -> tuple[str, str]:
+        """Detect available container runtime.
 
-    def _detect_container_runtime(self) -> str:
-        """Detect which container runtime is available."""
-        # Check for apple/container first
+        Returns:
+            Tuple of (runtime_name, command) — e.g. ('apple', 'container')
+        """
         if shutil.which('container'):
-            return 'apple'
-        # Fall back to Docker
-        elif shutil.which('docker'):
-            return 'docker'
-        # Error if neither found
+            return 'apple', 'container'
+        if shutil.which('docker'):
+            return 'docker', 'docker'
         raise RuntimeError(
-            "Neither apple/container nor Docker found. "
-            "Install apple/container (macOS 14+) or Docker."
+            "No container runtime found. Install apple/container (macOS 26+) or Docker."
         )
 ```
 
-**Step 2: Update start() method to use detected runtime**
+**Step 4: Run tests to verify they pass**
 
-Modify `start()` method to use `self.container_runtime`:
+Run: `source .venv/bin/activate && pytest tests/test_vm.py::test_detect_runtime_prefers_apple tests/test_vm.py::test_detect_runtime_falls_back_to_docker tests/test_vm.py::test_detect_runtime_raises_when_neither -v`
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add lib/vibedom/vm.py tests/test_vm.py
+git commit -m "feat: add container runtime detection (apple/container preferred, Docker fallback)"
+```
+
+---
+
+### Task 2: Update start() for Runtime Abstraction
+
+**Files:**
+- Modify: `lib/vibedom/vm.py`
+- Modify: `tests/test_vm.py`
+
+**Context:** The `start()` method currently hardcodes `docker run` with Docker-specific flags. We need to build the command dynamically based on `self.runtime`. Key differences:
+- Docker uses `-d`, apple/container uses `--detach`
+- Docker uses `--privileged` — **drop this for both** (no longer needed)
+- Mount syntax is the same (`-v src:dst:ro` works for both)
+- Env var syntax is the same (`-e KEY=VAL`)
+- Image name stays `vibedom-alpine:latest` for both
+
+**Step 1: Write failing test for start command construction**
+
+Add to `tests/test_vm.py`:
 
 ```python
-def start(self) -> None:
-    """Start the VM with workspace mounted."""
-    # Stop existing container if any
-    self.stop()
+def test_start_uses_apple_runtime(test_workspace, test_config):
+    """start() should use 'container' command when runtime is apple."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
 
-    # Copy mitmproxy addon to config dir
-    addon_src = Path(__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
-    addon_dst = self.config_dir / 'mitmproxy_addon.py'
-    shutil.copy(addon_src, addon_dst)
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        try:
+            vm.start()
+        except RuntimeError:
+            pass  # May fail on readiness check, that's ok
 
-    # Copy DLP scrubber module to config dir
-    scrubber_src = Path(__file__).parent.parent.parent / 'vm' / 'dlp_scrubber.py'
-    scrubber_dst = self.config_dir / 'dlp_scrubber.py'
-    shutil.copy(scrubber_src, scrubber_dst)
+        # First call should be stop (container delete), second should be container run
+        calls = mock_run.call_args_list
+        # Find the 'run' call
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        assert run_call[0][0][0] == 'container'
+        assert '--detach' in run_call[0][0]
+        assert '--privileged' not in run_call[0][0]
 
-    # Copy gitleaks config for runtime DLP patterns
-    gitleaks_src = Path(__file__).parent / 'config' / 'gitleaks.toml'
-    gitleaks_dst = self.config_dir / 'gitleaks.toml'
-    shutil.copy(gitleaks_src, gitleaks_dst)
 
-    # Prepare session repo directory if provided
-    repo_mount = []
-    session_mount = []
-    if self.session_dir:
-        repo_dir = self.session_dir / 'repo'
-        repo_dir.mkdir(parents=True, exist_ok=True)
-        repo_mount = ['--mount', f'type=bind,source={repo_dir},target=/work/repo']
-        session_mount = ['-v', f'{self.session_dir}:/mnt/session']
+def test_start_uses_docker_runtime(test_workspace, test_config):
+    """start() should use 'docker' command when runtime is docker."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
 
-    # Build command based on runtime
-    if self.container_runtime == 'apple':
-        container_cmd = 'container'
-        # apple/container uses --detach flag
-        run_opts = ['--detach', '--name', self.container_name]
-        # apple/container uses --env flag (same as Docker)
-        env_opts = [
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        try:
+            vm.start()
+        except RuntimeError:
+            pass
+
+        calls = mock_run.call_args_list
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        assert run_call[0][0][0] == 'docker'
+        assert '-d' in run_call[0][0]
+        assert '--privileged' not in run_call[0][0]
+```
+
+**Step 2: Run tests to verify they fail**
+
+Run: `source .venv/bin/activate && pytest tests/test_vm.py::test_start_uses_apple_runtime tests/test_vm.py::test_start_uses_docker_runtime -v`
+Expected: FAIL
+
+**Step 3: Rewrite start() method**
+
+Replace the `start()` method in `lib/vibedom/vm.py`:
+
+```python
+    def start(self) -> None:
+        """Start the VM with workspace mounted."""
+        # Stop existing container if any
+        self.stop()
+
+        # Copy mitmproxy addon to config dir
+        addon_src = Path(__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
+        addon_dst = self.config_dir / 'mitmproxy_addon.py'
+        shutil.copy(addon_src, addon_dst)
+
+        # Copy DLP scrubber module to config dir
+        scrubber_src = Path(__file__).parent.parent.parent / 'vm' / 'dlp_scrubber.py'
+        scrubber_dst = self.config_dir / 'dlp_scrubber.py'
+        shutil.copy(scrubber_src, scrubber_dst)
+
+        # Copy gitleaks config for runtime DLP patterns
+        gitleaks_src = Path(__file__).parent / 'config' / 'gitleaks.toml'
+        gitleaks_dst = self.config_dir / 'gitleaks.toml'
+        shutil.copy(gitleaks_src, gitleaks_dst)
+
+        # Build container run command
+        detach_flag = '--detach' if self.runtime == 'apple' else '-d'
+
+        cmd = [
+            self.runtime_cmd, 'run',
+            detach_flag,
+            '--name', self.container_name,
+            # Proxy environment variables
             '-e', 'HTTP_PROXY=http://127.0.0.1:8080',
             '-e', 'HTTPS_PROXY=http://127.0.0.1:8080',
             '-e', 'NO_PROXY=localhost,127.0.0.1,::1',
             '-e', 'http_proxy=http://127.0.0.1:8080',
             '-e', 'https_proxy=http://127.0.0.1:8080',
             '-e', 'no_proxy=localhost,127.0.0.1,::1',
+            # Mounts
+            '-v', f'{self.workspace}:/mnt/workspace:ro',
+            '-v', f'{self.config_dir}:/mnt/config:ro',
         ]
-        # Mount syntax for apple/container
-        mount_opts = [
-            '--mount', 'type=bind,source=/dev/urandom,target=/dev/random',
-        ]
-    else:  # Docker
-        container_cmd = 'docker'
-        run_opts = ['-d', '--name', self.container_name]
-        env_opts = [
-            '-e', 'HTTP_PROXY=http://127.0.0.1:8080',
-            '-e', 'HTTPS_PROXY=http://127.0.0.1:8080',
-            '-e', 'NO_PROXY=localhost,127.0.0.1,::1',
-        ]
-        # Mount syntax for Docker
-        mount_opts = ['-v', f'{self.workspace}:/mnt/workspace:ro',
-                      '-v', f'{self.config_dir}:/mnt/config:ro']
 
-    # Prepare full command
-    cmd = [container_cmd, 'run'] + run_opts + env_opts + mount_opts + [
-        '-v', f'{self.workspace}:/mnt/workspace:ro',
-        '-v', f'{self.config_dir}:/mnt/config:ro',
-        'vibedom-alpine:latest'
-    ]
+        # Session mounts
+        if self.session_dir:
+            repo_dir = self.session_dir / 'repo'
+            repo_dir.mkdir(parents=True, exist_ok=True)
+            cmd += ['-v', f'{repo_dir}:/work/repo']
+            cmd += ['-v', f'{self.session_dir}:/mnt/session']
 
-    # Add session mounts if provided
-    if self.session_dir:
-        cmd.extend(repo_mount + session_mount)
+        cmd.append('vibedom-alpine:latest')
 
-    # Start new container
-    try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to start VM container '{self.container_name}': {e}") from e
-    except FileNotFoundError:
-        raise RuntimeError("Container command not found. Install apple/container or Docker.") from None
-
-    # Wait for VM to be ready
-    for _ in range(10):
+        # Start container
         try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Failed to start VM container '{self.container_name}': {e}"
+            ) from e
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"Container command '{self.runtime_cmd}' not found."
+            ) from None
+
+        # Wait for VM to be ready
+        for _ in range(10):
             result = subprocess.run(
-                [container_cmd, 'exec', self.container_name, 'test', '-f', '/tmp/.vm-ready'],
+                [self.runtime_cmd, 'exec', self.container_name,
+                 'test', '-f', '/tmp/.vm-ready'],
                 capture_output=True,
-                check=False  # Don't raise on failure
+                check=False,
             )
             if result.returncode == 0:
                 return
-        except subprocess.CalledProcessError:
-            pass
-        time.sleep(1)
-    raise RuntimeError(f"VM '{self.container_name}' failed to become ready within 10 seconds")
+            time.sleep(1)
+        raise RuntimeError(
+            f"VM '{self.container_name}' failed to become ready within 10 seconds"
+        )
 ```
 
-**Step 3: Update stop() method for apple/container**
+**Step 4: Run tests to verify they pass**
 
-Modify `stop()` method to use detected runtime:
+Run: `source .venv/bin/activate && pytest tests/test_vm.py -k "detect_runtime or start_uses" -v`
+Expected: PASS
 
-```python
-def stop(self) -> None:
-    """Stop and remove the VM."""
-    try:
-        if self.container_runtime == 'apple':
-            container_cmd = 'container'
-            # apple/container uses rm command (same as Docker)
-            subprocess.run([container_cmd, 'rm', '-f', self.container_name], check=True)
-        else:  # Docker
-            subprocess.run(['docker', 'rm', '-f', self.container_name], check=True)
-    except FileNotFoundError:
-        raise RuntimeError("Container command not found") from None
-```
-
-**Step 4: Update exec() method for apple/container**
-
-Modify `exec()` method:
-
-```python
-def exec(self, cmd: list[str]) -> subprocess.CompletedProcess:
-    """Run a command inside the VM."""
-    if self.container_runtime == 'apple':
-        container_cmd = 'container'
-    else:
-        container_cmd = 'docker'
-    return subprocess.run([container_cmd, 'exec', self.container_name] + cmd, check=True)
-```
-
-**Step 5: Update CLI to add runtime selection option**
-
-Modify `lib/vibedom/cli.py` to add `--container-runtime` flag:
-
-```python
-import click
-
-@click.group()
-def cli():
-    """Vibedom sandbox for AI coding agents."""
-    pass
-
-@click.command()
-@click.option('--container-runtime', type=click.Choice(['auto', 'docker', 'apple']), default='auto', help='Container runtime (auto=detect, docker, apple/container)')
-def run(workspace: str):
-    """Run sandbox for workspace."""
-    manager = VMManager(Path(workspace), Path(click.get_appdir('vibedom') / 'config'))
-    manager.start()
-    click.echo(f"✅ Started vibedom sandbox for {workspace}")
-
-@click.command()
-def stop(workspace: Optional[str]):
-    """Stop sandbox session."""
-    manager = VMManager(Path(workspace), Path(click.get_appdir('vibedom') / 'config'))
-    manager.stop()
-    click.echo(f"✅ Stopped vibedom sandbox for {workspace}")
-```
-
-**Step 6: Commit vm.py and CLI changes**
+**Step 5: Commit**
 
 ```bash
-git add lib/vibedom/vm.py lib/vibedom/cli.py
-git commit -m "feat: add apple/container runtime support with fallback to Docker"
+git add lib/vibedom/vm.py tests/test_vm.py
+git commit -m "feat: update start() for runtime-agnostic container launch
+
+- Use detected runtime command (container/docker)
+- Drop --privileged (no longer needed with git workflow)
+- Use --detach for apple/container, -d for Docker
+- Same -v mount syntax works for both runtimes"
 ```
 
 ---
 
-## Task 4: Update Documentation
+### Task 3: Update stop() and exec() for Runtime Abstraction
+
+**Files:**
+- Modify: `lib/vibedom/vm.py`
+- Modify: `tests/test_vm.py`
+
+**Context:** `stop()` and `exec()` also hardcode `docker`. Key difference for stop: Docker uses `docker rm -f`, apple/container uses `container stop` then `container delete --force`.
+
+**Step 1: Write failing tests**
+
+Add to `tests/test_vm.py`:
+
+```python
+def test_stop_uses_apple_commands(test_workspace, test_config):
+    """stop() should use 'container stop' + 'container delete' for apple runtime."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        vm.stop()
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        # Should call container stop then container delete
+        assert calls[0][:2] == ['container', 'stop']
+        assert calls[1][:2] == ['container', 'delete']
+
+
+def test_stop_uses_docker_command(test_workspace, test_config):
+    """stop() should use 'docker rm -f' for docker runtime."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        vm.stop()
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0] == ['docker', 'rm', '-f', vm.container_name]
+
+
+def test_exec_uses_detected_runtime(test_workspace, test_config):
+    """exec() should use detected runtime command."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
+        vm = VMManager(test_workspace, test_config)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='hello', stderr=''
+        )
+        vm.exec(['echo', 'hello'])
+
+        call_args = mock_run.call_args[0][0]
+        assert call_args[:2] == ['container', 'exec']
+```
+
+**Step 2: Run tests to verify they fail**
+
+Run: `source .venv/bin/activate && pytest tests/test_vm.py -k "stop_uses or exec_uses" -v`
+Expected: FAIL
+
+**Step 3: Update stop() and exec()**
+
+Replace `stop()` and `exec()` in `lib/vibedom/vm.py`:
+
+```python
+    def stop(self) -> None:
+        """Stop and remove the VM."""
+        try:
+            if self.runtime == 'apple':
+                subprocess.run(
+                    ['container', 'stop', self.container_name],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ['container', 'delete', '--force', self.container_name],
+                    capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    ['docker', 'rm', '-f', self.container_name],
+                    capture_output=True,
+                )
+        except FileNotFoundError:
+            pass  # Runtime not installed
+
+    def exec(self, command: list[str]) -> subprocess.CompletedProcess:
+        """Execute a command inside the VM.
+
+        Args:
+            command: Command and arguments to execute
+
+        Returns:
+            CompletedProcess with stdout/stderr
+        """
+        return subprocess.run(
+            [self.runtime_cmd, 'exec', self.container_name] + command,
+            capture_output=True,
+            text=True,
+        )
+```
+
+**Step 4: Run tests to verify they pass**
+
+Run: `source .venv/bin/activate && pytest tests/test_vm.py -k "stop_uses or exec_uses or detect_runtime" -v`
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add lib/vibedom/vm.py tests/test_vm.py
+git commit -m "feat: update stop() and exec() for runtime abstraction
+
+- apple/container: stop + delete --force (no rm command)
+- Docker: rm -f (unchanged behavior)
+- exec() uses detected runtime command"
+```
+
+---
+
+### Task 4: Update CLI stop-all for Runtime Awareness
+
+**Files:**
+- Modify: `lib/vibedom/cli.py`
+- Modify: `tests/test_cli.py` (if it exists and tests stop-all)
+
+**Context:** The `stop` command with no workspace arg calls `docker ps` and `docker rm -f` directly. This needs runtime awareness too. We can reuse `VMManager._detect_runtime()` for this.
+
+**Step 1: Read current CLI tests**
+
+Check `tests/test_cli.py` to understand existing test patterns.
+
+**Step 2: Update stop-all in cli.py**
+
+Replace the stop-all block in `lib/vibedom/cli.py` (the `if workspace is None:` branch):
+
+```python
+    if workspace is None:
+        # Stop all vibedom containers
+        try:
+            runtime, runtime_cmd = VMManager._detect_runtime()
+        except RuntimeError as e:
+            click.secho(f"❌ {e}", fg='red')
+            sys.exit(1)
+
+        try:
+            if runtime == 'apple':
+                result = subprocess.run(
+                    ['container', 'list', '--all', '--format', '{{.Names}}'],
+                    capture_output=True, text=True, check=True,
+                )
+            else:
+                result = subprocess.run(
+                    ['docker', 'ps', '-a', '--filter', 'name=vibedom-',
+                     '--format', '{{.Names}}'],
+                    capture_output=True, text=True, check=True,
+                )
+
+            containers = [
+                name.strip() for name in result.stdout.split('\n')
+                if name.strip() and name.strip().startswith('vibedom-')
+            ]
+
+            if not containers:
+                click.echo("No vibedom containers running")
+                return
+
+            click.echo(f"Stopping {len(containers)} container(s)...")
+            for name in containers:
+                if runtime == 'apple':
+                    subprocess.run(['container', 'stop', name], capture_output=True)
+                    subprocess.run(['container', 'delete', '--force', name],
+                                   capture_output=True)
+                else:
+                    subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
+
+            click.echo(f"✅ Stopped {len(containers)} container(s)")
+
+        except subprocess.CalledProcessError as e:
+            click.secho(f"❌ Error stopping containers: {e}", fg='red')
+            sys.exit(1)
+        return
+```
+
+**Step 3: Run existing CLI tests**
+
+Run: `source .venv/bin/activate && pytest tests/test_cli.py -v`
+Expected: PASS (no regressions)
+
+**Step 4: Commit**
+
+```bash
+git add lib/vibedom/cli.py
+git commit -m "feat: update CLI stop-all for runtime-agnostic container cleanup"
+```
+
+---
+
+### Task 5: Update build.sh for Dual Runtime
+
+**Files:**
+- Modify: `vm/build.sh`
+
+**Context:** `build.sh` currently hardcodes `docker build`. Both `container build` and `docker build` accept `-f Dockerfile.alpine` — no file rename needed. `container build` looks for `Dockerfile` first, then `Containerfile`.
+
+**Step 1: Update build.sh**
+
+Replace `vm/build.sh`:
+
+```bash
+#!/bin/bash
+# Build Alpine Linux VM image for vibedom
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME="vibedom-alpine"
+
+# Detect container runtime
+if command -v container &>/dev/null; then
+    RUNTIME="apple/container"
+    BUILD_CMD="container build"
+elif command -v docker &>/dev/null; then
+    RUNTIME="docker"
+    BUILD_CMD="docker build"
+else
+    echo "Error: No container runtime found. Install apple/container (macOS 26+) or Docker."
+    exit 1
+fi
+
+echo "Building VM image: $IMAGE_NAME (using $RUNTIME)"
+$BUILD_CMD -t "$IMAGE_NAME:latest" -f "$SCRIPT_DIR/Dockerfile.alpine" "$SCRIPT_DIR"
+
+echo "✅ VM image built successfully: $IMAGE_NAME:latest"
+```
+
+**Step 2: Verify script is valid**
+
+Run: `bash -n vm/build.sh`
+Expected: No errors (syntax check only)
+
+**Step 3: Commit**
+
+```bash
+git add vm/build.sh
+git commit -m "feat: update build.sh to detect and use available container runtime"
+```
+
+---
+
+### Task 6: Drop --privileged Flag
+
+**Files:**
+- Modify: `lib/vibedom/vm.py` (already done in Task 2, verify here)
+- Modify: `docs/ARCHITECTURE.md`
+- Modify: `CLAUDE.md`
+
+**Context:** The `--privileged` flag was originally needed for overlay filesystem mounts and iptables. Both were removed: overlay FS replaced by git workflow, iptables replaced by explicit proxy. The flag is already dropped from `start()` in Task 2. This task cleans up documentation that still references it.
+
+**Step 1: Search for --privileged references**
+
+Run: `grep -rn "privileged" lib/ vm/ docs/ CLAUDE.md tests/`
+
+Fix any remaining references. Expected locations:
+- `CLAUDE.md` — mentions `--privileged` in architecture and security sections
+- `docs/ARCHITECTURE.md` — may reference privileged mode
+- `vm.py` — should already be clean from Task 2
+
+**Step 2: Update documentation**
+
+Remove or update all `--privileged` references to reflect the current state:
+- Architecture: No longer requires privileged mode
+- Security: Improved isolation (no privileged containers)
+- Code review checklist: Remove "No `--privileged` additions without security review" (no longer relevant)
+
+**Step 3: Commit**
+
+```bash
+git add CLAUDE.md docs/ARCHITECTURE.md
+git commit -m "docs: remove --privileged references (no longer needed with git workflow)"
+```
+
+---
+
+### Task 7: Update Documentation for Dual Runtime
 
 **Files:**
 - Modify: `docs/ARCHITECTURE.md`
 - Modify: `docs/USAGE.md`
-- Modify: `docs/technical-debt.md`
+- Modify: `CLAUDE.md`
+- Modify: `docs/TESTING.md`
+
+**Context:** Documentation currently says "Docker-based PoC" everywhere. Update to reflect the dual-runtime support with apple/container as the preferred runtime.
 
 **Step 1: Update ARCHITECTURE.md**
 
-Add section about container runtime:
+Add a "Container Runtime" subsection to the VM Isolation section:
 
 ```markdown
-## Container Runtime
+### Container Runtime
 
-Vibedom supports both Docker and apple/container runtimes for VM isolation.
+Vibedom supports two container runtimes:
 
-**Docker Runtime:**
-- Namespace-based isolation (less secure)
-- Docker-based approach
-- Compatible with all platforms
+| | apple/container | Docker |
+|---|---|---|
+| **Isolation** | Hardware VM (Virtualization.framework) | Namespace-based |
+| **macOS** | 26+ (Tahoe) | Any |
+| **CPU** | Apple Silicon only | Any |
+| **Security** | Full VM isolation per container | Shared kernel |
+| **Status** | Preferred | Fallback |
 
-**Apple/Container Runtime:**
-- Apple Virtualization.framework (hardware-level isolation)
-- Better security integration with macOS
-- macOS 14+ (Big Sur or later) required
-- Production runtime
-
-**Detection:**
-- Auto-detects available runtime (apple/container preferred, Docker fallback)
-- Can override with `--container-runtime` flag in CLI
-
-**Image:**
-- Containerfile format (same as Dockerfile)
-- Built with `container build` (apple/container) or `docker build`
-- Alpine Linux ARM64
-
-**Selection:**
-```bash
-vibedom run <workspace> --container-runtime apple  # Use apple/container
-vibedom run <workspace> --container-runtime docker  # Force Docker
-vibedom run <workspace>  # Auto-detect (prefers apple/container)
-```
-
-**Benefits:**
-- Hardware isolation via Virtualization.framework
-- Better macOS security integration
-- Faster startup with apple/container
-- Resource efficiency
+Runtime is auto-detected at startup. apple/container is preferred when available.
+Both runtimes use the same `Dockerfile.alpine` image.
 ```
 
 **Step 2: Update USAGE.md**
 
-Add container runtime section to user guide:
+Add after the Quick Start section:
 
 ```markdown
-### Container Runtime Options
+### Container Runtime
 
-Vibedom supports two container runtimes for VM isolation:
+Vibedom auto-detects your container runtime:
 
-**Apple/Container (Recommended):**
-- Uses Apple's Virtualization.framework for hardware-level isolation
-- Better security integration with macOS
-- Faster startup and resource efficiency
-- Requires macOS 14+ (Big Sur or later)
+- **apple/container** (preferred) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container).
+- **Docker** (fallback) — namespace-based containers. Works on any platform.
 
-**Docker (Fallback):**
-- Namespace-based isolation (less secure)
-- Docker-based approach
-- Compatible with all platforms
-- Works on older macOS versions
-
-**Auto-Detection (Default):**
-- Prefers apple/container if available
-- Falls back to Docker if not
-
-**Usage:**
+Before first use with apple/container, start the system service:
 ```bash
-# Use apple/container (recommended)
-vibedom run ~/myproject
-
-# Force Docker
-vibedom run ~/myproject --container-runtime docker
-
-# Auto-detect
-vibedom run ~/myproject
+container system start
 ```
 ```
 
-**Step 3: Update technical-debt.md**
+**Step 3: Update CLAUDE.md**
 
-Mark apple/container migration as completed:
+Update the "Docker Dependency" section under Known Limitations and the Phase 3 roadmap to reflect that apple/container support is now implemented.
 
-```markdown
-## Apple/Container Migration (Completed 2026-02-15)
+**Step 4: Update TESTING.md**
 
-**Original Issue**: Design targeted apple/container but implemented Docker-only
+Add a note about running tests with either runtime.
 
-**Solution Implemented**: Full apple/container support with Docker fallback
-- Containerfile format
-- Runtime detection and CLI flag
-- Updated all VM manager commands
-- Auto-detection with apple/container preference
-- Documentation updated
-
-**Result**: Now supports production-ready apple/container with Docker fallback
-```
-
-**Step 4: Commit documentation updates**
+**Step 5: Commit**
 
 ```bash
-git add docs/
-git commit -m "docs: add apple/container runtime documentation and mark migration complete"
+git add docs/ARCHITECTURE.md docs/USAGE.md CLAUDE.md docs/TESTING.md
+git commit -m "docs: update documentation for dual container runtime support"
 ```
 
 ---
 
-## Task 5: Test Apple/Container Implementation
+### Task 8: Manual Testing
 
 **Files:**
-- Test: Manual testing in terminal
-- Create: `docs/plans/2026-02-15-apple-container-test-plan.md` (optional test checklist)
+- Modify: `docs/TESTING.md` (document results)
 
-**Step 1: Test container runtime detection**
+**Context:** Verify the runtime detection and container lifecycle work end-to-end with whichever runtime is available.
 
-```bash
-# Test auto-detection
-vibedom run ~/test-workspace
-
-# Verify in vm.py logs which runtime was detected
-grep "container runtime" ~/.vibedom/logs/session-*/session.log
-
-# Expected: Should detect apple/container if available
-```
-
-**Step 2: Test container start**
+**Step 1: Build image**
 
 ```bash
-# Start with explicit apple/container
-vibedom run ~/test-workspace --container-runtime apple
-
-# Verify container starts
-container list | grep vibedom-test
-
-# Should show container running
+./vm/build.sh
+# Expected: Detects runtime, builds successfully
 ```
 
-**Step 3: Test container stop**
+**Step 2: Test container lifecycle**
 
 ```bash
-# Stop container
-vibedom stop ~/test-workspace
+# Create test workspace
+mkdir -p /tmp/test-runtime-vibedom
+echo "print('hello')" > /tmp/test-runtime-vibedom/app.py
 
-# Verify container is removed
-container list | grep vibedom-test
+# Start
+vibedom run /tmp/test-runtime-vibedom
 
-# Should not show container
+# Verify container is running and ready
+# (the CLI will print success or error)
+
+# Verify exec works
+docker exec vibedom-test-runtime-vibedom echo "runtime test"
+# OR
+container exec vibedom-test-runtime-vibedom echo "runtime test"
+
+# Stop
+vibedom stop /tmp/test-runtime-vibedom
+
+# Cleanup
+rm -rf /tmp/test-runtime-vibedom
 ```
 
-**Step 4: Test container exec**
+**Step 3: Document results in TESTING.md**
+
+Add an "Apple/Container Runtime" section with actual test results.
+
+**Step 4: Commit**
 
 ```bash
-# Start container
-vibedom run ~/test-workspace
-
-# Exec into container
-docker exec -it vibedom-test-workspace /bin/bash
-
-# Verify you're in container
-hostname
-
-# Run command
-ls /work
-
-# Verify git operations work
-cd /work/repo && git status
-```
-
-**Step 5: Test mounts**
-
-```bash
-# Start container
-vibedom run ~/test-workspace
-
-# Verify read-only workspace
-docker exec vibedom-test-workspace touch /mnt/workspace/test.txt
-
-# Should fail (read-only mount)
-```
-
-**Step 6: Test DLP scrubbing**
-
-```bash
-# Start container
-vibedom run ~/test-workspace
-
-# Create test file with secret
-echo "AKIAIOSFODNN7EXAMPLE" > /tmp/secret.txt
-
-# Try to POST via curl
-docker exec vibedom-test-workspace curl -X POST -d @/tmp/secret.txt https://httpbin.org/post
-
-# Verify scrubbing in logs
-cat ~/.vibedom/logs/session-*/network.jsonl | jq -r '.[] | select(.scrubbed != null)'
-
-# Should show scrubbed request
-```
-
-**Step 7: Test rollback**
-
-```bash
-# Test Docker fallback still works
-vibedom run ~/test-workspace --container-runtime docker
-
-# Should start with Docker
-container list | grep vibedom-test-workspace
-
-# Verify Docker container is running
-```
-
-**Step 8: Document test results**
-
-Create test checklist document with pass/fail for each test:
-
-```markdown
-# Apple/Container Test Results
-
-## Runtime Detection
-- [x] Auto-detects apple/container
-- [x] Falls back to Docker
-- [x] CLI flag --container-runtime works
-
-## Container Lifecycle
-- [x] Container starts with apple/container
-- [x] Container stops with apple/container
-- [x] Docker fallback still works
-- [x] Mounts work correctly
-- [x] Container exec works
-
-## DLP Scrubbing
-- [x] Secrets scrubbed from request bodies
-- [x] Secrets scrubbed from URL query params
-- [x] Request headers pass through
-- [x] Response bodies not scrubbed
-
-## Integration Tests
-- [x] Git operations work in container
-- [x] SSH agent works
-- [x] Mitmproxy runs and scrubs correctly
-- [x] Network whitelisting works
-
-## Issues Found
-- None critical
-- 1 minor: [describe any issues]
-
-## Recommendation
-[ ] Ready for production
-[ ] Needs additional work
-```
-
-**Step 9: Commit test plan (if created)**
-
-```bash
-git add docs/plans/2026-02-15-apple-container-test-plan.md
-git commit -m "docs: add apple/container test results"
+git add docs/TESTING.md
+git commit -m "test: validate container runtime detection and lifecycle"
 ```
 
 ---
 
-## Task 6: Final Verification and Documentation
+## Summary
 
-**Files:**
-- Update: `docs/plans/2026-02-15-dlp-scrubber-fixes.md` (add note about apple/container)
+**Tasks:**
+1. Add runtime detection to VMManager (15 min)
+2. Update `start()` for runtime abstraction (20 min)
+3. Update `stop()` and `exec()` for runtime abstraction (15 min)
+4. Update CLI `stop --all` for runtime awareness (15 min)
+5. Update `build.sh` for dual runtime (10 min)
+6. Drop `--privileged` from docs (10 min)
+7. Update documentation for dual runtime (15 min)
+8. Manual testing (20 min)
 
-**Step 1: Add apple/container note to DLP plan**
+**Estimated effort:** 2-3 hours
 
-```markdown
-### Apple/Container Migration
+**What changes:**
+- `lib/vibedom/vm.py` — runtime detection, all methods use `self.runtime_cmd`
+- `lib/vibedom/cli.py` — stop-all uses detected runtime
+- `vm/build.sh` — detects runtime for image build
+- `tests/test_vm.py` — runtime detection and command construction tests
+- Documentation — reflects dual runtime support
 
-**Status:** Planned (2026-02-15)
+**What does NOT change:**
+- `vm/Dockerfile.alpine` — same file, same name, works with both runtimes
+- `vm/startup.sh` — runs inside container, runtime-agnostic
+- `vm/mitmproxy_addon.py` — runs inside container, runtime-agnostic
+- `vm/dlp_scrubber.py` — runs inside container, runtime-agnostic
+- `lib/vibedom/config/gitleaks.toml` — pattern config, unchanged
 
-**Implementation:** See `docs/plans/2026-02-15-apple-container-migration.md`
-
-**Why apple/container:**
-- Apple Virtualization.framework provides hardware-level isolation
-- Better macOS security integration
-- Production-ready runtime (Docker is PoC)
-
-**Note:** Implementation includes Docker fallback for compatibility.
-```
-
-**Step 2: Update project README (if exists)**
-
-Add container runtime section to README:
-
-```markdown
-## Requirements
-
-- Python 3.12+
-- apple/container (macOS 14+) or Docker
-- Gitleaks (for pre-flight scanning)
-
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -e .
-
-# Initialize
-vibedom init
-
-# Run with auto-detection (prefers apple/container)
-vibedom run ~/myproject
-
-# Or force Docker
-vibedom run ~/myproject --container-runtime docker
-
-# Or force apple/container
-vibedom run ~/myproject --container-runtime apple
-```
-
-**Step 3: Final test run**
-
-Run full test suite to ensure no regressions:
-
-```bash
-# Activate venv
-source .venv/bin/activate
-
-# Run all tests
-pytest tests/ -v
-
-# Run with container runtime flag (if needed)
-pytest tests/ -v --container-runtime apple
-```
-
-**Step 4: Commit final changes**
-
-```bash
-git add README.md docs/
-git commit -m "docs: add apple/container information to README and final verification"
-```
-
----
-
-## Summary of Changes
-
-1. **Research** - Document apple/container API, Docker→container command mapping, Containerfile format differences, migration considerations
-2. **Containerfile** - Create Containerfile format of existing Dockerfile
-3. **Build script** - Update build.sh to detect container runtime and use appropriate commands
-4. **VM Manager** - Add container runtime detection, update all container commands, add CLI flag for runtime selection
-5. **Documentation** - Update ARCHITECTURE.md, USAGE.md, technical-debt.md with apple/container information
-6. **Testing** - Comprehensive manual testing plan for apple/container functionality
-7. **Final verification** - Update DLP plan notes, add README information, final test run
-
-**Estimated Effort:** 4-6 hours (simplified from research)
-
-**Risks:**
-- apple/container CLI may have subtle differences from Docker (command flag naming, output format)
-- Containerfile format may need minor tweaks
-- Mount syntax is different (--mount vs -v)
-- Testing on Apple Silicon required for production
-
-**Mitigation:**
-- Docker fallback always available (no breaking changes to core logic)
-- Runtime detection with CLI flag (--container-runtime auto/dockert/apple)
-- Comprehensive testing plan validates migration
-
-**What's apple/container:**
-- Apple's native container runtime (Virtualization.framework)
-- Production-ready for macOS 14+ (Big Sur or later)
-- Requires macOS 14+ and Apple Silicon hardware
-- Better hardware isolation than Docker (kernel-level vs namespace-only)
-
-**What's NOT being done:**
-- Not writing custom init images (not needed)
-- Not building custom kernel modules (not needed for our use case)
-- Not using apple/container-specific features (Rosetta, custom init)
-- Simply mapping Docker commands to apple/container equivalents
-- Testing basic functionality (container starts/stops/exec)
-
-**Key insights from docs:**
-- Containerfile format is 99% compatible with Docker (same FROM, RUN, COPY, CMD)
-- apple/container uses `--detach` flag, Docker uses `-d` (same behavior)
-- apple/container uses `--env KEY=VAL`, Docker uses `-e KEY=VAL` (same format)
-- apple/container uses `--mount type=bind,source=src,target=dst`, Docker uses `-v src:dst` (different syntax but equivalent)
-- apple/container auto-generates unique names (like Docker), we'll need `--name` flag
-- apple/container has `--ssh-agent` flag built-in for SSH socket forwarding (Docker needs manual setup)
-- apple/container uses BuildKit (like Docker), images built same way
-
-**Simplified approach:**
-1. Detect which runtime is available
-2. Use appropriate commands based on detection
-3. Test on Apple Silicon Mac (or document why can't)
-4. Keep Docker as fallback for testing/compatibility
+**Key decisions:**
+- **No Containerfile rename** — `container build` reads `Dockerfile` natively
+- **No `--privileged`** — git workflow eliminated the need
+- **Auto-detect with fallback** — no config needed, just works
+- **Same image for both** — OCI-compatible, no separate build paths
+- **`container system start` is user responsibility** — documented in USAGE.md, not automated
