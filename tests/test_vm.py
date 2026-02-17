@@ -218,19 +218,13 @@ def test_exec_uses_detected_runtime(test_workspace, test_config):
         assert call_args[:2] == ['container', 'exec']
 
 
-def test_start_mounts_claude_api_key(test_workspace, test_config, tmp_path):
-    """start() should mount ~/.claude/api_key if it exists."""
-    # Create fake Claude config directory
-    fake_claude_home = tmp_path / '.claude'
-    fake_claude_home.mkdir()
-    (fake_claude_home / 'api_key').write_text('fake-key')
-
+def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
+    """start() should mount vibedom-claude-config volume for Claude persistence."""
     session_dir = tmp_path / 'session'
     session_dir.mkdir()
 
-    with patch('vibedom.vm.Path.home', return_value=tmp_path):
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, session_dir)
+    with patch('shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(test_workspace, test_config, session_dir)
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -245,82 +239,10 @@ def test_start_mounts_claude_api_key(test_workspace, test_config, tmp_path):
             run_call = next(c for c in calls if 'run' in c[0][0])
             cmd = run_call[0][0]
 
-            # Check that api_key is mounted
+            # Check that Claude config volume is mounted
             assert '-v' in cmd
-            mount_idx = cmd.index('-v')
-            while mount_idx < len(cmd):
-                if f'{fake_claude_home}/api_key:/root/.claude/api_key:ro' in cmd[mount_idx + 1]:
-                    break
-                mount_idx = cmd.index('-v', mount_idx + 1)
-            else:
-                pytest.fail("api_key mount not found in command")
-
-
-def test_start_mounts_claude_settings(test_workspace, test_config, tmp_path):
-    """start() should mount ~/.claude/settings.json if it exists."""
-    fake_claude_home = tmp_path / '.claude'
-    fake_claude_home.mkdir()
-    (fake_claude_home / 'settings.json').write_text('{}')
-
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
-
-    with patch('vibedom.vm.Path.home', return_value=tmp_path):
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, session_dir)
-
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass
-
-            calls = mock_run.call_args_list
-            run_call = next(c for c in calls if 'run' in c[0][0])
-            cmd = run_call[0][0]
-
-            # Check that settings.json is mounted
-            mount_found = any(
-                f'{fake_claude_home}/settings.json:/root/.claude/settings.json:ro' in str(arg)
-                for arg in cmd
-            )
-            assert mount_found, "settings.json mount not found"
-
-
-def test_start_mounts_claude_skills(test_workspace, test_config, tmp_path):
-    """start() should mount ~/.claude/skills directory if it exists."""
-    fake_claude_home = tmp_path / '.claude'
-    fake_claude_home.mkdir()
-    skills_dir = fake_claude_home / 'skills'
-    skills_dir.mkdir()
-
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
-
-    with patch('vibedom.vm.Path.home', return_value=tmp_path):
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, session_dir)
-
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass
-
-            calls = mock_run.call_args_list
-            run_call = next(c for c in calls if 'run' in c[0][0])
-            cmd = run_call[0][0]
-
-            # Check that skills directory is mounted
-            mount_found = any(
-                f'{skills_dir}:/root/.claude/skills:ro' in str(arg)
-                for arg in cmd
-            )
-            assert mount_found, "skills directory mount not found"
+            volume_mount = 'vibedom-claude-config:/root/.claude'
+            assert volume_mount in cmd, f"Claude config volume mount '{volume_mount}' not found in command"
 
 
 def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tmp_path):
