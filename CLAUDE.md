@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete (HTTP/HTTPS whitelisting, VM isolation, git bundle workflow, secret detection). Usability improvements complete (Claude Code persistence, whitelist reload).
+**Current Status**: Phase 1 complete. Phase 2 DLP mostly complete (real-time scrubbing, audit logging). Usability features complete (Claude Code persistence, whitelist reload, apple/container support).
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -300,17 +300,21 @@ docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
 
 ## Future Roadmap
 
-### Phase 2: DLP and Monitoring
+### Phase 2: DLP and Monitoring ✅ (Mostly Complete)
 
-- **DLP scrubbing**: Real-time secret and PII scrubbing in HTTP traffic
-- **Shared patterns**: gitleaks.toml serves pre-flight scan + runtime DLP
-- **Audit logging**: Scrubbed findings logged to network.jsonl
-- Context-aware scrubbing
-- High-severity alerting
+**Completed:**
+- ✅ **DLP scrubbing**: Real-time secret and PII scrubbing in HTTP traffic
+- ✅ **Shared patterns**: gitleaks.toml serves pre-flight scan + runtime DLP
+- ✅ **Audit logging**: Scrubbed findings logged to network.jsonl
+
+**Remaining:**
+- ❌ **High-severity alerting**: Real-time notifications for critical findings
+- ❌ **Helper commands**: `vibedom review`, `vibedom merge` for git bundle workflow
 
 ### Phase 3: Production Hardening
 
 - **Log rotation**: Implement size limits and rotation policies
+- **Session cleanup**: Automatic cleanup with retention policies
 - **Multi-tenant support**: Workspace isolation for multiple users
 
 ## Contributing Guidelines
@@ -356,17 +360,18 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 - **Read-only workspace**: Original files protected from malicious writes
 - **Forced proxy**: All traffic routed through mitmproxy (no bypass)
 - **Deploy keys**: Unique SSH key per machine (not personal credentials)
+- **DLP scrubbing**: Real-time secret/PII detection and scrubbing in HTTP traffic
+- **Pre-flight scanning**: Gitleaks scan before VM starts
 
-### Known Security Limitations (Phase 1)
+### Known Security Limitations
 
-- **No egress DLP**: Sensitive data could leak via HTTP/HTTPS requests
-- **Docker dependency**: Relies on Docker daemon security
 - **Proxy bypass**: Tools that don't respect HTTP_PROXY can bypass whitelist (~5%)
+- **HTTPS response scrubbing**: Currently only scrubs requests, not responses (by design - not a threat vector for prompt injection)
 
-### Future Security Enhancements (Phase 2+)
+### Future Security Enhancements
 
-- Real-time DLP with Presidio
 - Kernel-level network filtering as fallback for non-proxy-aware tools
+- High-severity alerting for critical DLP findings
 
 ## Support and Documentation
 
@@ -382,6 +387,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-02-17 (usability improvements complete)
-**Status**: Claude Code persistence, whitelist reload, apple/container support complete
-**Next Milestone**: Phase 2 - DLP integration and monitoring
+**Last Updated**: 2026-02-17 (Phase 2 DLP complete)
+**Status**: Phase 1 complete, Phase 2 DLP complete (alerting pending), usability features complete
+**Next Milestone**: High-severity alerting OR Phase 3 production hardening
