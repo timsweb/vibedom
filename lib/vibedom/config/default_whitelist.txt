@@ -14,3 +14,4 @@ gitlab.com
 # Add your internal domains below:
 # gitlab.company.internal
 # composer.company.internal
+gitlab.waterstones.com
