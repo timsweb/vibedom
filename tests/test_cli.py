@@ -141,3 +141,68 @@ def test_shell_command_apple_container(tmp_path):
             assert '/work/repo' in call_args
             assert f'vibedom-{workspace.name}' in call_args
             assert 'bash' in call_args
+
+
+def test_review_command_success(tmp_path):
+    """review command should add remote, fetch, show commits and diff."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('subprocess.run') as mock_run:
+            # Mock git commands
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD
+                MagicMock(returncode=1),  # git remote get-url (doesn't exist)
+                MagicMock(returncode=0),  # git remote add
+                MagicMock(returncode=0),  # git fetch
+                MagicMock(returncode=0, stdout='abc123 commit message\n'),  # git log
+                MagicMock(returncode=0, stdout='diff content\n'),  # git diff
+            ]
+
+            result = runner.invoke(main, ['review', str(workspace)])
+
+            assert result.exit_code == 0
+            assert 'session-20260218-120000-000000' in result.output
+
+            # Verify git commands were called
+            calls = [' '.join(call[0][0]) for call in mock_run.call_args_list]
+            assert any('remote add' in call for call in calls)
+            assert any('fetch' in call for call in calls)
+            assert any('log' in call for call in calls)
+            assert any('diff' in call for call in calls)
+
+
+def test_review_no_session_found(tmp_path):
+    """review should error if no session found."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / 'logs'
+    logs_dir.mkdir()
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('subprocess.run') as mock_run:
+            # Mock git check to pass
+            mock_run.return_value = MagicMock(returncode=0)
+
+            result = runner.invoke(main, ['review', str(workspace)])
+
+            assert result.exit_code == 1
+            assert 'No session found' in result.output

@@ -303,6 +303,121 @@ def shell(workspace: str, runtime: str) -> None:
         sys.exit(1)
 
 
+@main.command('review')
+@click.argument('workspace', type=click.Path(exists=True))
+@click.option('--branch', help='Branch to review from bundle (default: current branch)')
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def review(workspace: str, branch: str, runtime: str) -> None:
+    """Review changes from most recent session."""
+    workspace_path = Path(workspace).resolve()
+
+    if not workspace_path.is_dir():
+        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
+        sys.exit(1)
+
+    # Check if workspace is a git repository
+    try:
+        subprocess.run(
+            ['git', '-C', str(workspace_path), 'rev-parse', '--git-dir'],
+            capture_output=True, check=True
+        )
+    except subprocess.CalledProcessError:
+        click.secho(f"❌ Error: {workspace_path} is not a git repository", fg='red')
+        sys.exit(1)
+
+    # Find latest session
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    session_dir = find_latest_session(workspace_path, logs_dir)
+
+    if not session_dir:
+        click.secho(f"❌ No session found for {workspace_path.name}", fg='red')
+        click.echo(f"Run 'vibedom run {workspace_path}' first.")
+        sys.exit(1)
+
+    # Check if bundle exists
+    bundle_path = session_dir / 'repo.bundle'
+    if not bundle_path.exists():
+        click.secho(f"❌ Bundle not found at {bundle_path}", fg='red')
+        click.echo("Session may have failed or been deleted.")
+        sys.exit(1)
+
+    # Get current branch or use --branch argument
+    if not branch:
+        try:
+            result = subprocess.run(
+                ['git', '-C', str(workspace_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
+                capture_output=True, text=True, check=True
+            )
+            branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            click.secho(f"❌ Error: Could not determine current branch", fg='red')
+            sys.exit(1)
+
+    # Generate remote name from session timestamp
+    session_id = session_dir.name.replace('session-', '')
+    remote_name = f'vibedom-{session_id}'
+
+    # Check if remote already exists
+    result = subprocess.run(
+        ['git', '-C', str(workspace_path), 'remote', 'get-url', remote_name],
+        capture_output=True
+    )
+
+    if result.returncode != 0:
+        # Add remote
+        click.echo(f"Adding remote: {remote_name}")
+        subprocess.run(
+            ['git', '-C', str(workspace_path), 'remote', 'add', remote_name, str(bundle_path)],
+            check=True
+        )
+    else:
+        click.echo(f"Using existing remote: {remote_name}")
+
+    # Fetch bundle
+    click.echo("Fetching bundle...")
+    try:
+        subprocess.run(
+            ['git', '-C', str(workspace_path), 'fetch', remote_name],
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        click.secho(f"❌ Error: Failed to fetch bundle", fg='red')
+        sys.exit(1)
+
+    # Show session info
+    click.echo(f"\n✅ Session: {session_dir.name}")
+    click.echo(f"📦 Bundle: {bundle_path}")
+    click.echo(f"🌿 Branch: {branch}\n")
+
+    # Show commit log
+    click.echo("📝 Commits:")
+    result = subprocess.run(
+        ['git', '-C', str(workspace_path), 'log', '--oneline',
+         f'{branch}..{remote_name}/{branch}'],
+        capture_output=True, text=True
+    )
+    if result.stdout:
+        click.echo(result.stdout)
+    else:
+        click.echo("  (no new commits)")
+
+    # Show diff
+    click.echo("\n📊 Changes:")
+    result = subprocess.run(
+        ['git', '-C', str(workspace_path), 'diff',
+         f'{branch}..{remote_name}/{branch}'],
+        capture_output=True, text=True
+    )
+    if result.stdout:
+        click.echo(result.stdout)
+    else:
+        click.echo("  (no changes)")
+
+    # Show merge hint
+    click.echo(f"\n💡 To merge: vibedom merge {workspace_path}")
+
+
 @main.command('reload-whitelist')
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']), default='auto',
