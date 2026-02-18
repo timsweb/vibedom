@@ -262,7 +262,7 @@ def stop(workspace, runtime):
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
               default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def shell(workspace, runtime):
+def shell(workspace: str, runtime: str) -> None:
     """Open shell in container's working directory (/work/repo)."""
     workspace_path = Path(workspace).resolve()
 
@@ -272,7 +272,7 @@ def shell(workspace, runtime):
 
     # Detect runtime
     try:
-        runtime_name, runtime_cmd = VMManager._detect_runtime(
+        _, runtime_cmd = VMManager._detect_runtime(
             runtime if runtime != 'auto' else None
         )
     except RuntimeError as e:

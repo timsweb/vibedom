@@ -131,5 +131,13 @@ def test_shell_command_apple_container(tmp_path):
 
             result = runner.invoke(main, ['shell', str(workspace)])
 
+            # Verify exec command called
+            mock_run.assert_called_once()
             call_args = mock_run.call_args[0][0]
             assert call_args[0] == 'container'
+            assert 'exec' in call_args
+            assert '-it' in call_args
+            assert '-w' in call_args
+            assert '/work/repo' in call_args
+            assert f'vibedom-{workspace.name}' in call_args
+            assert 'bash' in call_args
