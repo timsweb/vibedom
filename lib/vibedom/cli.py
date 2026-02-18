@@ -308,7 +308,7 @@ def shell(workspace: str, runtime: str) -> None:
 @click.option('--branch', help='Branch to review from bundle (default: current branch)')
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
               default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def review(workspace: str, branch: str, runtime: str) -> None:
+def review(workspace: str, branch: Optional[str], runtime: str) -> None:
     """Review changes from most recent session."""
     workspace_path = Path(workspace).resolve()
 
@@ -385,10 +385,14 @@ def review(workspace: str, branch: str, runtime: str) -> None:
     if result.returncode != 0:
         # Add remote
         click.echo(f"Adding remote: {remote_name}")
-        subprocess.run(
-            ['git', '-C', str(workspace_path), 'remote', 'add', remote_name, str(bundle_path)],
-            check=True
-        )
+        try:
+            subprocess.run(
+                ['git', '-C', str(workspace_path), 'remote', 'add', remote_name, str(bundle_path)],
+                check=True
+            )
+        except subprocess.CalledProcessError:
+            click.secho(f"❌ Error: Failed to add git remote", fg='red')
+            sys.exit(1)
     else:
         click.echo(f"Using existing remote: {remote_name}")
 
@@ -413,7 +417,7 @@ def review(workspace: str, branch: str, runtime: str) -> None:
     result = subprocess.run(
         ['git', '-C', str(workspace_path), 'log', '--oneline',
          f'{branch}..{remote_name}/{branch}'],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=True
     )
     if result.stdout:
         click.echo(result.stdout)
@@ -425,7 +429,7 @@ def review(workspace: str, branch: str, runtime: str) -> None:
     result = subprocess.run(
         ['git', '-C', str(workspace_path), 'diff',
          f'{branch}..{remote_name}/{branch}'],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=True
     )
     if result.stdout:
         click.echo(result.stdout)

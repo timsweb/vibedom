@@ -242,3 +242,85 @@ def test_review_fails_if_session_running(tmp_path):
 
                     assert result.exit_code == 1
                     assert 'still running' in result.output
+
+
+def test_review_fails_if_bundle_missing(tmp_path):
+    """review should error if bundle file is missing."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create session without bundle
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    # No bundle created
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+            with patch('subprocess.run') as mock_run:
+                # Mock git repo check and container not running
+                mock_run.side_effect = [
+                    MagicMock(returncode=0),  # git rev-parse (is git repo)
+                    MagicMock(returncode=0, stdout=''),  # docker ps (not running)
+                ]
+
+                result = runner.invoke(main, ['review', str(workspace)])
+
+                assert result.exit_code == 1
+                assert 'Bundle not found' in result.output
+
+
+def test_review_fails_if_not_git_repo(tmp_path):
+    """review should error if workspace is not a git repository."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+
+    with patch('subprocess.run') as mock_run:
+        # Mock git check to fail
+        mock_run.side_effect = subprocess.CalledProcessError(128, 'git rev-parse')
+
+        result = runner.invoke(main, ['review', str(workspace)])
+
+        assert result.exit_code == 1
+        assert 'not a git repository' in result.output
+
+
+def test_review_fails_on_git_remote_add_error(tmp_path):
+    """review should error gracefully if git remote add fails."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+            with patch('subprocess.run') as mock_run:
+                # Mock git commands
+                mock_run.side_effect = [
+                    MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                    MagicMock(returncode=0, stdout=''),  # docker ps (not running)
+                    MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD
+                    MagicMock(returncode=1),  # git remote get-url (doesn't exist)
+                    subprocess.CalledProcessError(128, 'git remote add'),  # git remote add fails
+                ]
+
+                result = runner.invoke(main, ['review', str(workspace)])
+
+                assert result.exit_code == 1
+                assert 'Failed to add git remote' in result.output
