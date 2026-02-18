@@ -43,6 +43,9 @@
    - `vibedom stop` - Stop all vibedom containers
    - `vibedom init` - First-time setup (SSH keys, whitelist)
    - `vibedom reload-whitelist <workspace>` - Reload whitelist without restart
+   - `vibedom review <workspace>` - Review changes from session bundle
+   - `vibedom merge <workspace>` - Merge changes from session bundle
+   - `vibedom shell <workspace>` - Open shell in container
 
 ### Key Design Decisions
 
@@ -273,6 +276,15 @@ vibedom stop
 
 # Reload whitelist
 vibedom reload-whitelist ~/projects/myapp
+
+# Review session changes
+vibedom review ~/projects/myapp
+
+# Merge session changes
+vibedom merge ~/projects/myapp
+
+# Shell into container
+vibedom shell ~/projects/myapp
 
 # View logs
 ls ~/.vibedom/logs/

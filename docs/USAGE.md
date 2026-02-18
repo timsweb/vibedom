@@ -189,6 +189,51 @@ git push origin feature/add-authentication
 git remote remove vibedom-xyz
 ```
 
+### Helper Commands
+
+**Quick review of changes:**
+```bash
+vibedom review ~/projects/myapp
+# Shows commit log and diff from most recent session
+```
+
+**Merge changes into workspace:**
+```bash
+vibedom merge ~/projects/myapp
+# Squash merge (single commit) - default
+
+vibedom merge ~/projects/myapp --merge
+# Keep full commit history
+
+vibedom merge ~/projects/myapp --branch experimental
+# Merge specific branch from bundle
+```
+
+**Shell access to container:**
+```bash
+vibedom shell ~/projects/myapp
+# Opens bash in /work/repo directory
+```
+
+**Full workflow:**
+```bash
+# 1. Start session
+vibedom run ~/projects/myapp
+
+# 2. Work in container
+vibedom shell ~/projects/myapp
+# (make changes, exit shell)
+
+# 3. Stop and create bundle
+vibedom stop ~/projects/myapp
+
+# 4. Review changes
+vibedom review ~/projects/myapp
+
+# 5. Merge into workspace
+vibedom merge ~/projects/myapp
+```
+
 ### Session Management
 
 **List sessions:**
