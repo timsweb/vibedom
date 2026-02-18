@@ -324,3 +324,115 @@ def test_review_fails_on_git_remote_add_error(tmp_path):
 
                 assert result.exit_code == 1
                 assert 'Failed to add git remote' in result.output
+
+
+def test_merge_command_squash(tmp_path):
+    """merge command should squash by default."""
+    from vibedom.cli import main
+
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session (needs to be in .vibedom/logs like the review command expects)
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-130000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                MagicMock(returncode=0, stdout=''),  # git status --porcelain (clean)
+                MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD (branch)
+                MagicMock(returncode=1),  # git remote get-url (doesn't exist)
+                MagicMock(returncode=0),  # git remote add
+                MagicMock(returncode=0),  # git fetch
+                MagicMock(returncode=0),  # git merge --squash
+                MagicMock(returncode=0),  # git commit
+                MagicMock(returncode=0),  # git remote remove
+            ]
+
+            result = runner.invoke(main, ['merge', str(workspace)])
+
+            assert result.exit_code == 0
+            # Verify squash merge was called
+            merge_calls = [call for call in mock_run.call_args_list
+                          if 'merge' in ' '.join(call[0][0])]
+            assert any('--squash' in ' '.join(call[0][0]) for call in merge_calls)
+
+
+def test_merge_command_keep_history(tmp_path):
+    """merge command with --merge flag should keep full history."""
+    from vibedom.cli import main
+
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session (needs to be in .vibedom/logs like the review command expects)
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-130000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                MagicMock(returncode=0, stdout=''),  # git status --porcelain (clean)
+                MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD (branch)
+                MagicMock(returncode=1),  # git remote get-url (doesn't exist)
+                MagicMock(returncode=0),  # git remote add
+                MagicMock(returncode=0),  # git fetch
+                MagicMock(returncode=0),  # git merge (no squash)
+                MagicMock(returncode=0),  # git remote remove
+            ]
+
+            result = runner.invoke(main, ['merge', str(workspace), '--merge'])
+
+            assert result.exit_code == 0
+            # Verify regular merge (no --squash)
+            merge_calls = [call for call in mock_run.call_args_list
+                          if 'merge' in ' '.join(call[0][0])]
+            assert not any('--squash' in ' '.join(call[0][0]) for call in merge_calls)
+
+
+def test_merge_fails_with_uncommitted_changes(tmp_path):
+    """merge should abort if workspace has uncommitted changes."""
+    from vibedom.cli import main
+
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session (needs to be in .vibedom/logs like the review command expects)
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-130000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                MagicMock(returncode=0, stdout=' M file.txt\n'),  # git status returns dirty state
+            ]
+
+            result = runner.invoke(main, ['merge', str(workspace)])
+
+            assert result.exit_code == 1
+            assert 'uncommitted changes' in result.output
