@@ -335,6 +335,24 @@ def review(workspace: str, branch: str, runtime: str) -> None:
         click.echo(f"Run 'vibedom run {workspace_path}' first.")
         sys.exit(1)
 
+    # Check if session is still running
+    container_name = f'vibedom-{workspace_path.name}'
+    try:
+        _, runtime_cmd = VMManager._detect_runtime(runtime if runtime != 'auto' else None)
+    except RuntimeError as e:
+        click.secho(f"❌ {e}", fg='red')
+        sys.exit(1)
+
+    # Check if container is running
+    result = subprocess.run(
+        [runtime_cmd, 'ps', '-q', '--filter', f'name={container_name}'],
+        capture_output=True, text=True
+    )
+    if result.stdout.strip():
+        click.secho(f"❌ Session is still running", fg='red')
+        click.echo(f"Stop it first: vibedom stop {workspace_path}")
+        sys.exit(1)
+
     # Check if bundle exists
     bundle_path = session_dir / 'repo.bundle'
     if not bundle_path.exists():

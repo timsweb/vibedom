@@ -160,29 +160,31 @@ def test_review_command_success(tmp_path):
     with patch('vibedom.cli.Path.home') as mock_home:
         mock_home.return_value = tmp_path
 
-        with patch('subprocess.run') as mock_run:
-            # Mock git commands
-            mock_run.side_effect = [
-                MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
-                MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD
-                MagicMock(returncode=1),  # git remote get-url (doesn't exist)
-                MagicMock(returncode=0),  # git remote add
-                MagicMock(returncode=0),  # git fetch
-                MagicMock(returncode=0, stdout='abc123 commit message\n'),  # git log
-                MagicMock(returncode=0, stdout='diff content\n'),  # git diff
-            ]
+        with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+            with patch('subprocess.run') as mock_run:
+                # Mock git commands and container check
+                mock_run.side_effect = [
+                    MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
+                    MagicMock(returncode=0, stdout=''),  # docker ps (not running)
+                    MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD
+                    MagicMock(returncode=1),  # git remote get-url (doesn't exist)
+                    MagicMock(returncode=0),  # git remote add
+                    MagicMock(returncode=0),  # git fetch
+                    MagicMock(returncode=0, stdout='abc123 commit message\n'),  # git log
+                    MagicMock(returncode=0, stdout='diff content\n'),  # git diff
+                ]
 
-            result = runner.invoke(main, ['review', str(workspace)])
+                result = runner.invoke(main, ['review', str(workspace)])
 
-            assert result.exit_code == 0
-            assert 'session-20260218-120000-000000' in result.output
+                assert result.exit_code == 0
+                assert 'session-20260218-120000-000000' in result.output
 
-            # Verify git commands were called
-            calls = [' '.join(call[0][0]) for call in mock_run.call_args_list]
-            assert any('remote add' in call for call in calls)
-            assert any('fetch' in call for call in calls)
-            assert any('log' in call for call in calls)
-            assert any('diff' in call for call in calls)
+                # Verify git commands were called
+                calls = [' '.join(call[0][0]) for call in mock_run.call_args_list]
+                assert any('remote add' in call for call in calls)
+                assert any('fetch' in call for call in calls)
+                assert any('log' in call for call in calls)
+                assert any('diff' in call for call in calls)
 
 
 def test_review_no_session_found(tmp_path):
@@ -206,3 +208,37 @@ def test_review_no_session_found(tmp_path):
 
             assert result.exit_code == 1
             assert 'No session found' in result.output
+
+
+def test_review_fails_if_session_running(tmp_path):
+    """review should error if container is still running."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    # Create fake session
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'session.log').write_text(f'Session started for workspace: {workspace}')
+    (session_dir / 'repo.bundle').write_text('fake bundle')
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
+
+        with patch('vibedom.cli.Path.cwd') as mock_cwd:
+            mock_cwd.return_value = workspace
+
+            with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+                with patch('subprocess.run') as mock_run:
+                    # Mock git repo check, then container ps shows running
+                    mock_run.side_effect = [
+                        MagicMock(returncode=0),  # git rev-parse (is git repo)
+                        MagicMock(returncode=0, stdout='vibedom-myapp\n'),  # docker ps (running)
+                    ]
+
+                    result = runner.invoke(main, ['review', str(workspace)])
+
+                    assert result.exit_code == 1
+                    assert 'still running' in result.output
