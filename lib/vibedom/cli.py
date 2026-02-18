@@ -13,6 +13,33 @@ from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
 from vibedom.session import Session, SessionCleanup
+from datetime import datetime, timedelta
+
+
+def _format_session_info(session: dict) -> str:
+    """Format session information for display.
+
+    Args:
+        session: Session dictionary with 'workspace', 'timestamp', 'dir' keys
+
+    Returns:
+        Formatted string: "workspace_name (X days old) - session_dir_name"
+    """
+    workspace_name = session['workspace'].name if session['workspace'] else 'unknown'
+    age = datetime.now() - session['timestamp']
+
+    if age.days > 0:
+        age_str = f"{age.days} day{'s' if age.days > 1 else ''} old"
+    elif age.seconds >= 3600:
+        hours = age.seconds // 3600
+        age_str = f"{hours} hour{'s' if hours > 1 else ''} old"
+    elif age.seconds >= 60:
+        minutes = age.seconds // 60
+        age_str = f"{minutes} minute{'s' if minutes > 1 else ''} old"
+    else:
+        age_str = f"{age.seconds} second{'s' if age.seconds > 1 else ''} old"
+
+    return f"{workspace_name} ({age_str}) - {session['dir'].name}"
 
 
 def find_latest_session(workspace: Path, logs_dir: Path) -> Optional[Path]:
@@ -644,12 +671,13 @@ def prune(force: bool, dry_run: bool, runtime: str) -> None:
 
     deleted = 0
     for session in to_delete:
+        session_info = _format_session_info(session)
         if dry_run:
-            click.echo(f"Would delete: {session['dir'].name}")
+            click.echo(f"Would delete: {session_info}")
             deleted += 1
-        elif force or click.confirm(f"Delete {session['dir'].name}?", default=True):
+        elif force or click.confirm(f"Delete {session_info}?", default=True):
             SessionCleanup._delete_session(session['dir'])
-            click.echo(f"✓ Deleted {session['dir'].name}")
+            click.echo(f"✓ Deleted {session_info}")
             deleted += 1
 
     if dry_run:
@@ -680,12 +708,13 @@ def housekeeping(days: int, force: bool, dry_run: bool, runtime: str) -> None:
 
     deleted = 0
     for session in to_delete:
+        session_info = _format_session_info(session)
         if dry_run:
-            click.echo(f"Would delete: {session['dir'].name}")
+            click.echo(f"Would delete: {session_info}")
             deleted += 1
-        elif force or click.confirm(f"Delete {session['dir'].name}?", default=True):
+        elif force or click.confirm(f"Delete {session_info}?", default=True):
             SessionCleanup._delete_session(session['dir'])
-            click.echo(f"✓ Deleted {session['dir'].name}")
+            click.echo(f"✓ Deleted {session_info}")
             deleted += 1
 
     if dry_run:
