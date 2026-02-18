@@ -54,3 +54,40 @@ def test_reload_whitelist_fails_if_container_not_running(tmp_path):
 
             assert result.exit_code == 1
             assert 'Failed to reload' in result.output
+
+
+def test_find_latest_session_success(tmp_path):
+    """find_latest_session should return most recent session for workspace."""
+    from vibedom.cli import find_latest_session
+
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / 'logs'
+    logs_dir.mkdir()
+
+    # Create two sessions
+    session1 = logs_dir / 'session-20260218-100000-000000'
+    session1.mkdir()
+    (session1 / 'session.log').write_text(f'Session started for workspace: {workspace}')
+
+    session2 = logs_dir / 'session-20260218-110000-000000'
+    session2.mkdir()
+    (session2 / 'session.log').write_text(f'Session started for workspace: {workspace}')
+
+    result = find_latest_session(workspace, logs_dir)
+    assert result == session2  # Most recent
+
+
+def test_find_latest_session_not_found(tmp_path):
+    """find_latest_session should return None if no session found."""
+    from vibedom.cli import find_latest_session
+
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / 'logs'
+    logs_dir.mkdir()
+
+    result = find_latest_session(workspace, logs_dir)
+    assert result is None

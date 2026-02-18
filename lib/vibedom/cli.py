@@ -6,12 +6,35 @@ import subprocess
 import tempfile
 import click
 from pathlib import Path
+from typing import Optional
 from vibedom.ssh_keys import generate_deploy_key, get_public_key
 from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
 from vibedom.session import Session
+
+
+def find_latest_session(workspace: Path, logs_dir: Path) -> Optional[Path]:
+    """Find most recent session directory for a workspace.
+
+    Args:
+        workspace: Workspace path to search for
+        logs_dir: Base logs directory (e.g., ~/.vibedom/logs)
+
+    Returns:
+        Path to session directory if found, None otherwise
+    """
+    if not logs_dir.exists():
+        return None
+
+    for session_dir in sorted(logs_dir.glob('session-*'), reverse=True):
+        session_log = session_dir / 'session.log'
+        if session_log.exists():
+            log_content = session_log.read_text()
+            if str(workspace.resolve()) in log_content:
+                return session_dir
+    return None
 
 @click.group()
 @click.version_option()
