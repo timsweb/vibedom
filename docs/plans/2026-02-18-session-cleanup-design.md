@@ -71,13 +71,13 @@ vibedom housekeeping [--days 7] [--force] [--dry-run]
 ### Session Discovery
 
 ```python
-def find_all_sessions(logs_dir: Path) -> List[Dict]:
+def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> List[Dict]:
     """Return all sessions with metadata."""
     sessions = []
     for session_dir in logs_dir.glob('session-*'):
         timestamp = parse_session_timestamp(session_dir.name)
         workspace = extract_workspace_from_log(session_dir / 'session.log')
-        is_running = check_container_status(workspace)
+        is_running = check_container_status(workspace, runtime)
         sessions.append({
             'dir': session_dir,
             'timestamp': timestamp,
@@ -93,15 +93,16 @@ def find_all_sessions(logs_dir: Path) -> List[Dict]:
 2. Filter: `not session['is_running']`
 3. Interactive: prompt each (YES default)
 4. Delete: `shutil.rmtree(session['dir'])`
-5. Show summary
+5. Show summary with deleted and skipped counts
 
 ### Housekeeping Flow
 
 1. Find all sessions
 2. Filter: `session['timestamp'] < (now - timedelta(days=N))`
-3. Skip future-dated sessions (clock issues)
-4. Same interactive/delete flow as prune
-5. Show summary
+3. Filter: `not session['is_running']`
+4. Skip future-dated sessions (clock issues)
+5. Same interactive/delete flow as prune
+6. Show summary with deleted and skipped counts
 
 ## Error Handling
 
@@ -134,6 +135,10 @@ All errors use `click.secho()` for consistent formatting with contextual informa
 ### Unit Tests (`tests/test_session_cleanup.py`)
 
 ```python
+from datetime import datetime, timedelta
+from pathlib import Path
+from vibedom.session import SessionCleanup
+
 def test_find_all_sessions(logs_dir_with_sessions):
     """Test session discovery returns all sessions."""
     sessions = SessionCleanup.find_all_sessions(logs_dir_with_sessions)
@@ -198,7 +203,7 @@ class SessionCleanup:
     """Handles session discovery and cleanup operations."""
 
     @staticmethod
-    def find_all_sessions(logs_dir: Path) -> List[Dict]:
+    def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> List[Dict]:
         """Discover all sessions with metadata."""
 
     @staticmethod
@@ -232,11 +237,14 @@ class SessionCleanup:
 @main.command()
 @click.option('--force', '-f', is_flag=True, help='Delete without prompting')
 @click.option('--dry-run', is_flag=True, help='Preview without deleting')
-def prune(force: bool, dry_run: bool) -> None:
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def prune(force: bool, dry_run: bool, runtime: str) -> None:
     """Remove all session directories without running containers."""
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    sessions = SessionCleanup.find_all_sessions(logs_dir)
+    sessions = SessionCleanup.find_all_sessions(logs_dir, runtime)
     to_delete = SessionCleanup._filter_not_running(sessions)
+    skipped = len(sessions) - len(to_delete)
 
     if not to_delete:
         click.echo("No sessions to delete")
@@ -244,22 +252,34 @@ def prune(force: bool, dry_run: bool) -> None:
 
     click.echo(f"Found {len(to_delete)} session(s) to delete")
 
+    deleted = 0
     for session in to_delete:
         if dry_run:
             click.echo(f"Would delete: {session['dir'].name}")
+            deleted += 1
         elif force or click.confirm(f"Delete {session['dir'].name}?", default=True):
             SessionCleanup._delete_session(session['dir'])
             click.echo(f"✓ Deleted {session['dir'].name}")
+            deleted += 1
+
+    if dry_run:
+        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
+    else:
+        click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
 
 @main.command()
 @click.option('--days', '-d', default=7, help='Delete sessions older than N days')
 @click.option('--force', '-f', is_flag=True, help='Delete without prompting')
 @click.option('--dry-run', is_flag=True, help='Preview without deleting')
-def housekeeping(days: int, force: bool, dry_run: bool) -> None:
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def housekeeping(days: int, force: bool, dry_run: bool, runtime: str) -> None:
     """Remove sessions older than N days."""
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    sessions = SessionCleanup.find_all_sessions(logs_dir)
-    to_delete = SessionCleanup._filter_by_age(sessions, days)
+    sessions = SessionCleanup.find_all_sessions(logs_dir, runtime)
+    old_sessions = SessionCleanup._filter_by_age(sessions, days)
+    to_delete = SessionCleanup._filter_not_running(old_sessions)
+    skipped = len(old_sessions) - len(to_delete)
 
     if not to_delete:
         click.echo(f"No sessions older than {days} days")
@@ -267,12 +287,20 @@ def housekeeping(days: int, force: bool, dry_run: bool) -> None:
 
     click.echo(f"Found {len(to_delete)} session(s) older than {days} days")
 
+    deleted = 0
     for session in to_delete:
         if dry_run:
             click.echo(f"Would delete: {session['dir'].name}")
+            deleted += 1
         elif force or click.confirm(f"Delete {session['dir'].name}?", default=True):
             SessionCleanup._delete_session(session['dir'])
             click.echo(f"✓ Deleted {session['dir'].name}")
+            deleted += 1
+
+    if dry_run:
+        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
+    else:
+        click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
 ```
 
 ### Helper Function Reuse
