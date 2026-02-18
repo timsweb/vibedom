@@ -160,6 +160,30 @@ class SessionCleanup:
             return None
 
     @staticmethod
+    def _extract_workspace(session_dir: Path) -> Path | None:
+        """Extract workspace path from session.log.
+
+        Args:
+            session_dir: Path to session directory containing session.log
+
+        Returns:
+            Path to workspace if found, None otherwise
+        """
+        session_log = session_dir / 'session.log'
+        if not session_log.exists():
+            return None
+
+        try:
+            log_content = session_log.read_text()
+            for line in log_content.split('\n'):
+                if 'Session started for workspace:' in line:
+                    workspace_str = line.split('Session started for workspace:')[-1].strip()
+                    return Path(workspace_str)
+        except (IOError, OSError):
+            pass
+        return None
+
+    @staticmethod
     def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> list:
         """Discover all sessions with metadata."""
         return []
