@@ -9,3 +9,15 @@ from vibedom.session import SessionCleanup
 def test_class_exists():
     """Test that SessionCleanup class exists."""
     assert hasattr(SessionCleanup, 'find_all_sessions')
+
+
+def test_parse_timestamp_valid():
+    """Test timestamp parsing from valid directory name."""
+    timestamp = SessionCleanup._parse_timestamp('session-20260216-171057-123456')
+    assert timestamp == datetime(2026, 2, 16, 17, 10, 57, 123456)
+
+
+def test_parse_timestamp_invalid():
+    """Test timestamp parsing from invalid directory name."""
+    timestamp = SessionCleanup._parse_timestamp('invalid-name')
+    assert timestamp is None

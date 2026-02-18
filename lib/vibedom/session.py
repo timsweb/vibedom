@@ -141,6 +141,25 @@ class SessionCleanup:
     """Handles session discovery and cleanup operations."""
 
     @staticmethod
+    def _parse_timestamp(session_dir_name: str) -> datetime | None:
+        """Parse timestamp from session directory name.
+
+        Args:
+            session_dir_name: Directory name like 'session-20260216-171057-123456'
+
+        Returns:
+            datetime object if valid, None otherwise
+        """
+        try:
+            prefix = 'session-'
+            if not session_dir_name.startswith(prefix):
+                return None
+            timestamp_str = session_dir_name[len(prefix):]
+            return datetime.strptime(timestamp_str, '%Y%m%d-%H%M%S-%f')
+        except (ValueError, IndexError):
+            return None
+
+    @staticmethod
     def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> list:
         """Discover all sessions with metadata."""
         return []
