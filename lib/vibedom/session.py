@@ -184,6 +184,105 @@ class SessionCleanup:
         return None
 
     @staticmethod
+    def _is_container_running(workspace: Path, runtime: str) -> bool:
+        """Check if vibedom container for workspace is running.
+
+        Args:
+            workspace: Path to workspace
+            runtime: Runtime type ('docker', 'apple', or 'auto')
+
+        Returns:
+            True if container is running, False otherwise
+        """
+        try:
+            runtime_cmd = runtime if runtime in ('docker', 'apple') else 'docker'
+            container_name = f'vibedom-{workspace.name}'
+
+            result = subprocess.run(
+                [runtime_cmd, 'ps', '--filter', f'name={container_name}',
+                 '--format', '{{.Names}}'],
+                capture_output=True, text=True, check=False
+            )
+
+            return container_name in result.stdout
+        except Exception:
+            return False
+
+    @staticmethod
     def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> list:
-        """Discover all sessions with metadata."""
-        return []
+        """Discover all sessions with metadata.
+
+        Args:
+            logs_dir: Base logs directory containing session-* subdirectories
+            runtime: Runtime type for container detection
+
+        Returns:
+            List of session dictionaries with keys: dir, timestamp, workspace, is_running
+        """
+        sessions = []
+
+        for session_dir in logs_dir.glob('session-*'):
+            if not session_dir.is_dir():
+                continue
+
+            timestamp = SessionCleanup._parse_timestamp(session_dir.name)
+            if timestamp is None:
+                continue
+
+            workspace = SessionCleanup._extract_workspace(session_dir)
+            is_running = SessionCleanup._is_container_running(
+                workspace, runtime
+            ) if workspace else False
+
+            sessions.append({
+                'dir': session_dir,
+                'timestamp': timestamp,
+                'workspace': workspace,
+                'is_running': is_running
+            })
+
+        return sorted(sessions, key=lambda x: x['timestamp'], reverse=True)
+
+    @staticmethod
+    def _filter_by_age(sessions: list, days: int) -> list:
+        """Filter sessions older than N days.
+
+        Args:
+            sessions: List of session dictionaries
+            days: Number of days threshold
+
+        Returns:
+            List of sessions older than N days (excluding future-dated)
+        """
+        from datetime import timedelta
+
+        cutoff = datetime.now() - timedelta(days=days)
+        return [
+            s for s in sessions
+            if s['timestamp'] < cutoff and s['timestamp'] < datetime.now()
+        ]
+
+    @staticmethod
+    def _filter_not_running(sessions: list) -> list:
+        """Filter sessions without running containers.
+
+        Args:
+            sessions: List of session dictionaries
+
+        Returns:
+            List of sessions where is_running is False
+        """
+        return [s for s in sessions if not s['is_running']]
+
+    @staticmethod
+    def _delete_session(session_dir: Path) -> None:
+        """Delete session directory.
+
+        Args:
+            session_dir: Path to session directory to delete
+        """
+        try:
+            import shutil
+            shutil.rmtree(session_dir, ignore_errors=True)
+        except Exception:
+            pass
