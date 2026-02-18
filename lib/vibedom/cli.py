@@ -258,6 +258,51 @@ def stop(workspace, runtime):
         click.echo("✅ Container stopped")
 
 
+@main.command('shell')
+@click.argument('workspace', type=click.Path(exists=True))
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def shell(workspace, runtime):
+    """Open shell in container's working directory (/work/repo)."""
+    workspace_path = Path(workspace).resolve()
+
+    if not workspace_path.is_dir():
+        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
+        sys.exit(1)
+
+    # Detect runtime
+    try:
+        runtime_name, runtime_cmd = VMManager._detect_runtime(
+            runtime if runtime != 'auto' else None
+        )
+    except RuntimeError as e:
+        click.secho(f"❌ {e}", fg='red')
+        sys.exit(1)
+
+    # Build container name
+    container_name = f'vibedom-{workspace_path.name}'
+
+    # Build exec command
+    cmd = [
+        runtime_cmd, 'exec',
+        '-it',
+        '-w', '/work/repo',
+        container_name,
+        'bash'
+    ]
+
+    # Execute (give user interactive shell)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError:
+        click.secho(f"❌ Container not running", fg='red')
+        click.echo(f"Start it with: vibedom run {workspace_path}")
+        sys.exit(1)
+    except FileNotFoundError:
+        click.secho(f"❌ Error: {runtime_cmd} command not found", fg='red')
+        sys.exit(1)
+
+
 @main.command('reload-whitelist')
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']), default='auto',

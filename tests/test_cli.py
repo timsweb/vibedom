@@ -91,3 +91,45 @@ def test_find_latest_session_not_found(tmp_path):
 
     result = find_latest_session(workspace, logs_dir)
     assert result is None
+
+
+def test_shell_command_docker(tmp_path):
+    """shell command should exec into docker container."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            result = runner.invoke(main, ['shell', str(workspace)])
+
+            # Verify exec command called
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args[0][0]
+            assert call_args[0] == 'docker'
+            assert 'exec' in call_args
+            assert '-it' in call_args
+            assert '-w' in call_args
+            assert '/work/repo' in call_args
+            assert f'vibedom-{workspace.name}' in call_args
+            assert 'bash' in call_args
+
+
+def test_shell_command_apple_container(tmp_path):
+    """shell command should exec into apple/container."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+
+    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('apple', 'container')):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            result = runner.invoke(main, ['shell', str(workspace)])
+
+            call_args = mock_run.call_args[0][0]
+            assert call_args[0] == 'container'
