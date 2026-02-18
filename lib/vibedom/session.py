@@ -135,3 +135,12 @@ class Session:
     def finalize(self) -> None:
         """Finalize the session (called at end)."""
         self.log_event('Session ended', level='INFO')
+
+
+class SessionCleanup:
+    """Handles session discovery and cleanup operations."""
+
+    @staticmethod
+    def find_all_sessions(logs_dir: Path, runtime: str = 'auto') -> list:
+        """Discover all sessions with metadata."""
+        return []
