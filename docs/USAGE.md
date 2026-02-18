@@ -248,6 +248,41 @@ ls ~/.vibedom/logs/
 rm -rf ~/.vibedom/logs/session-20260214-123456
 ```
 
+### Session Cleanup
+
+Vibedom provides automated session cleanup commands to help manage disk space.
+
+**Prune old sessions:**
+
+Remove all session directories that don't have running containers:
+
+```bash
+# Preview what will be deleted
+vibedom prune --dry-run
+
+# Delete all non-running sessions (interactive)
+vibedom prune
+
+# Delete without prompting
+vibedom prune --force
+```
+
+**Clean up old sessions by age:**
+
+Remove sessions older than N days:
+
+```bash
+# Delete sessions older than 7 days (default)
+vibedom housekeeping --dry-run
+vibedom housekeeping
+
+# Delete sessions older than 30 days
+vibedom housekeeping --days 30 --dry-run
+vibedom housekeeping --days 30 --force
+```
+
+Both commands skip sessions with running containers to avoid data loss.
+
 ### Troubleshooting
 
 **Bundle creation failed:**
