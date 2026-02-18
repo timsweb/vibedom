@@ -12,3 +12,12 @@ def test_prune_help():
     result = runner.invoke(main, ['prune', '--help'])
     assert result.exit_code == 0
     assert 'prune' in result.output.lower()
+
+
+def test_housekeeping_help():
+    """Test housekeeping command has help text."""
+    runner = CliRunner()
+    result = runner.invoke(main, ['housekeeping', '--help'])
+    assert result.exit_code == 0
+    assert 'housekeeping' in result.output.lower()
+    assert '--days' in result.output

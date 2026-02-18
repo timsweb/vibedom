@@ -658,5 +658,41 @@ def prune(force: bool, dry_run: bool, runtime: str) -> None:
         click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
 
 
+@main.command()
+@click.option('--days', '-d', default=7, help='Delete sessions older than N days')
+@click.option('--force', '-f', is_flag=True, help='Delete without prompting')
+@click.option('--dry-run', is_flag=True, help='Preview without deleting')
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']),
+              default='auto', help='Container runtime (auto-detect, docker, or apple)')
+def housekeeping(days: int, force: bool, dry_run: bool, runtime: str) -> None:
+    """Remove sessions older than N days."""
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    sessions = SessionCleanup.find_all_sessions(logs_dir, runtime)
+    old_sessions = SessionCleanup._filter_by_age(sessions, days)
+    to_delete = SessionCleanup._filter_not_running(old_sessions)
+    skipped = len(old_sessions) - len(to_delete)
+
+    if not to_delete:
+        click.echo(f"No sessions older than {days} days")
+        return
+
+    click.echo(f"Found {len(to_delete)} session(s) older than {days} days")
+
+    deleted = 0
+    for session in to_delete:
+        if dry_run:
+            click.echo(f"Would delete: {session['dir'].name}")
+            deleted += 1
+        elif force or click.confirm(f"Delete {session['dir'].name}?", default=True):
+            SessionCleanup._delete_session(session['dir'])
+            click.echo(f"✓ Deleted {session['dir'].name}")
+            deleted += 1
+
+    if dry_run:
+        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
+    else:
+        click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
+
+
 if __name__ == '__main__':
     main()
