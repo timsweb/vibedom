@@ -9,7 +9,9 @@ def test_generate_session_id_format():
 def test_generate_session_id_workspace_with_hyphens():
     sid = generate_session_id('rabbitmq-talk')
     assert sid.startswith('rabbitmq-talk-')
-    assert len(sid.split('-')) == 4  # two workspace parts + adjective + noun
+    # After the workspace prefix, there should be exactly one hyphen (adjective-noun)
+    suffix = sid[len('rabbitmq-talk-'):]
+    assert suffix.count('-') == 1
 
 def test_generate_session_id_is_random():
     ids = {generate_session_id('myapp') for _ in range(20)}

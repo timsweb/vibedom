@@ -1,3 +1,5 @@
+"""Word lists for generating human-readable session IDs."""
+
 import random
 
 ADJECTIVES = [
