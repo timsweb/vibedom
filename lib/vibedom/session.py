@@ -254,6 +254,77 @@ class Session:
             self.log_event('Session abandoned (bundle creation failed)', level='WARN')
 
 
+class SessionRegistry:
+    """Discovers and resolves sessions from the logs directory."""
+
+    def __init__(self, logs_dir: Path):
+        self.logs_dir = logs_dir
+
+    def all(self) -> list['Session']:
+        """All sessions sorted newest first, skipping invalid directories."""
+        sessions = []
+        for session_dir in sorted(self.logs_dir.glob('session-*'), reverse=True):
+            if not session_dir.is_dir():
+                continue
+            try:
+                sessions.append(Session.load(session_dir))
+            except (FileNotFoundError, ValueError, KeyError):
+                continue
+        return sessions
+
+    def running(self) -> list['Session']:
+        """Sessions with status 'running'."""
+        return [s for s in self.all() if s.state.status == 'running']
+
+    def find(self, id_or_name: str) -> Optional['Session']:
+        """Find session by session ID or workspace name (most recent match)."""
+        for session in self.all():
+            if session.state.session_id == id_or_name:
+                return session
+            if Path(session.state.workspace).name == id_or_name:
+                return session
+        return None
+
+    def resolve(
+        self,
+        id_or_name: Optional[str],
+        running_only: bool = False,
+        sessions: Optional[list['Session']] = None,
+    ) -> 'Session':
+        """Resolve to a single session, auto-selecting or prompting as needed.
+
+        Args:
+            id_or_name: Session ID or workspace name; None means auto-select
+            running_only: If True, only consider running sessions
+            sessions: Pre-filtered list (avoids double-loading when provided)
+
+        Raises:
+            SystemExit (via click.ClickException) if no match found
+        """
+        import click
+        if id_or_name:
+            session = self.find(id_or_name)
+            if not session:
+                raise click.ClickException(f"No session found for '{id_or_name}'")
+            return session
+
+        candidates = sessions if sessions is not None else (
+            self.running() if running_only else self.all()
+        )
+        noun = "running sessions" if running_only else "sessions"
+
+        if not candidates:
+            raise click.ClickException(f"No {noun} found")
+        if len(candidates) == 1:
+            return candidates[0]
+
+        click.echo(f"Multiple {noun} found:")
+        for i, s in enumerate(candidates, 1):
+            click.echo(f"  {i}. {s.display_name}")
+        choice = click.prompt("Select session", type=click.IntRange(1, len(candidates)))
+        return candidates[choice - 1]
+
+
 class SessionCleanup:
     """Handles session discovery and cleanup operations."""
 
