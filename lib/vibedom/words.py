@@ -19,7 +19,7 @@ NOUNS = [
     'huffman', 'turing', 'knuth', 'laplace', 'leibniz', 'lovelace',
     'maxwell', 'mendel', 'newton', 'noether', 'pascal', 'planck',
     'poincare', 'ramanujan', 'shannon', 'shor', 'tesla', 'thompson',
-    'torvalds', 'von-neumann', 'wiles', 'wozniak', 'ritchie', 'liskov',
+    'torvalds', 'neumann', 'wiles', 'wozniak', 'ritchie', 'liskov',
     'mccarthy', 'minsky', 'naur', 'perlis', 'hamming', 'codd', 'chen',
     'backus', 'allen', 'adleman', 'rivest', 'shamir', 'diffie', 'hellman',
     'lamport', 'gray', 'brooks', 'floyd', 'hoare', 'wirth', 'stroustrup',
