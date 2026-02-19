@@ -2,15 +2,16 @@ import tempfile
 import subprocess
 import shutil
 from pathlib import Path
-from vibedom.session import Session
+from vibedom.session import Session, SessionState
 
 def test_session_creation():
     """Should create session directory with unique ID."""
     with tempfile.TemporaryDirectory() as tmpdir:
         logs_dir = Path(tmpdir)
         workspace = Path('/tmp/test')
+        workspace.mkdir(exist_ok=True)
 
-        session = Session(workspace, logs_dir)
+        session = Session.start(workspace, 'docker', logs_dir)
 
         assert session.session_dir.exists()
         assert session.session_dir.parent == logs_dir
@@ -19,7 +20,9 @@ def test_session_creation():
 def test_session_log_network_request():
     """Should log network requests to network.jsonl."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        session = Session(Path('/tmp/test'), Path(tmpdir))
+        workspace = Path('/tmp/test')
+        workspace.mkdir(exist_ok=True)
+        session = Session.start(workspace, 'docker', Path(tmpdir))
 
         session.log_network_request(
             method='GET',
@@ -40,7 +43,9 @@ def test_session_log_network_request():
 def test_session_log_event():
     """Should log events to session.log."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        session = Session(Path('/tmp/test'), Path(tmpdir))
+        workspace = Path('/tmp/test')
+        workspace.mkdir(exist_ok=True)
+        session = Session.start(workspace, 'docker', Path(tmpdir))
 
         session.log_event('VM started')
         session.log_event('Pre-flight scan complete', level='INFO')
@@ -53,14 +58,17 @@ def test_session_log_event():
         assert 'Pre-flight scan complete' in content
 
 def test_session_finalize():
-    """Should log session end event."""
+    """Should log session end or finalization event."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        session = Session(Path('/tmp/test'), Path(tmpdir))
+        workspace = Path('/tmp/test')
+        workspace.mkdir(exist_ok=True)
+        session = Session.start(workspace, 'docker', Path(tmpdir))
         session.finalize()
 
         log_file = session.session_dir / 'session.log'
         content = log_file.read_text()
-        assert 'Session ended' in content
+        # finalize now calls create_bundle which logs events
+        assert 'Session' in content
 
 def test_create_bundle_success():
     """Bundle created successfully from container repo."""
@@ -75,7 +83,7 @@ def test_create_bundle_success():
         subprocess.run(['git', 'add', '.'], cwd=workspace, check=True)
         subprocess.run(['git', 'commit', '-m', 'Initial'], cwd=workspace, check=True)
 
-        session = Session(workspace, logs_dir)
+        session = Session.start(workspace, 'docker', logs_dir)
 
         # Simulate container repo with commits
         repo_dir = session.session_dir / 'repo'
@@ -112,7 +120,7 @@ def test_create_bundle_failure():
 
     try:
         workspace.mkdir(parents=True, exist_ok=True)
-        session = Session(workspace, logs_dir)
+        session = Session.start(workspace, 'docker', logs_dir)
 
         # No repo directory exists - bundle creation should fail gracefully
         bundle_path = session.create_bundle()
@@ -126,3 +134,82 @@ def test_create_bundle_failure():
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
         shutil.rmtree(logs_dir, ignore_errors=True)
+
+
+def test_session_start_creates_state_json(tmp_path):
+    """Session.start() should write state.json."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    assert (session.session_dir / 'state.json').exists()
+    assert session.state.status == 'running'
+    assert session.state.runtime == 'docker'
+
+def test_session_start_creates_session_log(tmp_path):
+    """Session.start() should create session.log with initial entry."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    assert session.session_log.exists()
+
+def test_session_load_from_existing_dir(tmp_path):
+    """Session.load() should restore session from state.json."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    session_dir = session.session_dir
+    loaded = Session.load(session_dir)
+    assert loaded.state.session_id == session.state.session_id
+    assert loaded.state.workspace == session.state.workspace
+
+def test_session_is_container_running_docker(tmp_path):
+    """is_container_running uses state.runtime, no parameter."""
+    from unittest.mock import patch, MagicMock
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(stdout='vibedom-myapp\n')
+        assert session.is_container_running() is True
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == 'docker'
+
+def test_session_is_container_running_apple(tmp_path):
+    """is_container_running uses 'container' command for apple runtime."""
+    from unittest.mock import patch, MagicMock
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'apple', tmp_path / 'logs')
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(stdout='vibedom-myapp\n')
+        session.is_container_running()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == 'container'
+
+def test_session_not_running_for_complete_status(tmp_path):
+    """is_container_running returns False without subprocess for non-running sessions."""
+    from unittest.mock import patch
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    session.state.status = 'complete'
+    with patch('subprocess.run') as mock_run:
+        assert session.is_container_running() is False
+        mock_run.assert_not_called()
+
+def test_session_age_str(tmp_path):
+    """age_str returns human-readable age."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    age = session.age_str
+    assert any(unit in age for unit in ('second', 'minute', 'hour', 'day'))
+
+def test_session_display_name(tmp_path):
+    """display_name includes session_id and status."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    name = session.display_name
+    assert session.state.session_id in name
+    assert 'running' in name

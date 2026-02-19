@@ -79,28 +79,93 @@ class SessionState:
 
 
 class Session:
-    """Manages a sandbox session with logging."""
+    """Manages a sandbox session: lifecycle, state, and logging."""
 
-    def __init__(self, workspace: Path, logs_base_dir: Path):
-        """Create a new session.
+    def __init__(self, state: 'SessionState', session_dir: Path):
+        self.state = state
+        self.session_dir = session_dir
+        self.network_log = session_dir / 'network.jsonl'
+        self.session_log = session_dir / 'session.log'
+
+    @classmethod
+    def start(cls, workspace: Path, runtime: str, logs_dir: Path) -> 'Session':
+        """Create and initialise a new session.
 
         Args:
-            workspace: Path to workspace being sandboxed
-            logs_base_dir: Base directory for logs (e.g., ~/.vibedom/logs)
+            workspace: Resolved path to workspace directory
+            runtime: Container runtime ('docker' or 'apple')
+            logs_dir: Base directory for all session logs
+
+        Returns:
+            New Session with state.json written and initial log entry
+
+        Example:
+            >>> session = Session.start(Path('/projects/myapp'), 'docker', logs_dir)
         """
-        self.workspace = workspace
-
-        # Create session directory with timestamp (including microseconds for uniqueness)
+        state = SessionState.create(workspace, runtime)
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-        self.session_dir = logs_base_dir / f'session-{timestamp}'
-        self.session_dir.mkdir(parents=True, exist_ok=True)
+        session_dir = logs_dir / f'session-{timestamp}'
+        session_dir.mkdir(parents=True, exist_ok=True)
+        state.save(session_dir)
+        session = cls(state, session_dir)
+        session.log_event(f'Session started for workspace: {workspace}')
+        return session
 
-        # Create log files
-        self.network_log = self.session_dir / 'network.jsonl'
-        self.session_log = self.session_dir / 'session.log'
+    @classmethod
+    def load(cls, session_dir: Path) -> 'Session':
+        """Load an existing session from its directory.
 
-        # Initialize session log
-        self.log_event(f'Session started for workspace: {workspace}', level='INFO')
+        Args:
+            session_dir: Path to session directory containing state.json
+
+        Returns:
+            Session restored from state.json
+        """
+        state = SessionState.load(session_dir)
+        return cls(state, session_dir)
+
+    def is_container_running(self) -> bool:
+        """Check if this session's container is currently running.
+
+        Returns False immediately (without subprocess call) if status is not 'running'.
+        """
+        if self.state.status != 'running':
+            return False
+        runtime_cmd = 'container' if self.state.runtime == 'apple' else 'docker'
+        try:
+            result = subprocess.run(
+                [runtime_cmd, 'ps', '--filter', f'name={self.state.container_name}',
+                 '--format', '{{.Names}}'],
+                capture_output=True, text=True, check=False
+            )
+            return any(
+                line.strip() == self.state.container_name
+                for line in result.stdout.splitlines()
+            )
+        except Exception:
+            return False
+
+    @property
+    def age_str(self) -> str:
+        """Human-readable age of this session (e.g. '2h ago', '3d ago')."""
+        age = datetime.now() - self.state.started_at_dt
+        if age.days > 0:
+            n = age.days
+            return f"{n} day{'s' if n > 1 else ''} ago"
+        hours = age.seconds // 3600
+        if hours > 0:
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        minutes = age.seconds // 60
+        if minutes > 0:
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        n = age.seconds
+        return f"{n} second{'s' if n != 1 else ''} ago"
+
+    @property
+    def display_name(self) -> str:
+        """One-line display string for list/prompt output."""
+        workspace_name = Path(self.state.workspace).name
+        return f"{self.state.session_id} ({workspace_name}, {self.state.status}, {self.age_str})"
 
     def log_network_request(
         self,
@@ -109,104 +174,84 @@ class Session:
         allowed: bool,
         reason: Optional[str] = None
     ) -> None:
-        """Log a network request.
-
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            url: Request URL
-            allowed: Whether request was allowed
-            reason: Optional reason for block/scrub
-        """
+        """Log a network request to network.jsonl."""
         entry = {
             'timestamp': datetime.now().isoformat(),
             'method': method,
             'url': url,
             'allowed': allowed,
-            'reason': reason
+            'reason': reason,
         }
-
         try:
             with open(self.network_log, 'a') as f:
                 f.write(json.dumps(entry) + '\n')
         except (IOError, OSError) as e:
-            # Don't crash the session - log to stderr
             import sys
             print(f"Warning: Failed to log network request: {e}", file=sys.stderr)
 
     def log_event(self, message: str, level: str = 'INFO') -> None:
-        """Log an event to session log.
-
-        Args:
-            message: Log message
-            level: Log level (INFO, WARN, ERROR)
-        """
+        """Log an event to session.log."""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         entry = f'[{timestamp}] {level}: {message}\n'
-
         try:
             with open(self.session_log, 'a') as f:
                 f.write(entry)
         except (IOError, OSError) as e:
-            # Don't crash the session - log to stderr
             import sys
             print(f"Warning: Failed to log event: {e}", file=sys.stderr)
 
     def create_bundle(self) -> Optional[Path]:
         """Create git bundle from session repository.
 
-        Creates a git bundle containing all refs from the container's
-        git repository. The bundle can be used as a git remote for
-        review and merge.
-
         Returns:
             Path to bundle file if successful, None if creation failed
 
         Example:
-            >>> session = Session(workspace, logs_dir)
             >>> bundle_path = session.create_bundle()
             >>> if bundle_path:
-            ...     # User can now: git remote add vibedom bundle_path
+            ...     # git remote add vibedom bundle_path
         """
         bundle_path = self.session_dir / 'repo.bundle'
         repo_dir = self.session_dir / 'repo'
-
         try:
-            self.log_event('Creating git bundle...', level='INFO')
-
-            # Check if repo directory exists
+            self.log_event('Creating git bundle...')
             if not repo_dir.exists():
                 self.log_event('Repository directory not found', level='ERROR')
                 return None
-
-            # Create bundle with all refs
-            result = subprocess.run([
-                'git', '-C', str(repo_dir),
-                'bundle', 'create', str(bundle_path), '--all'
-            ], capture_output=True, check=True, text=True)
-
-            # Verify bundle is valid
-            verify_result = subprocess.run([
-                'git', 'bundle', 'verify', str(bundle_path)
-            ], capture_output=True, check=False, text=True)
-
-            if verify_result.returncode == 0:
-                self.log_event(f'Bundle created: {bundle_path}', level='INFO')
+            subprocess.run(
+                ['git', '-C', str(repo_dir), 'bundle', 'create', str(bundle_path), '--all'],
+                capture_output=True, check=True, text=True
+            )
+            verify = subprocess.run(
+                ['git', 'bundle', 'verify', str(bundle_path)],
+                capture_output=True, check=False, text=True
+            )
+            if verify.returncode == 0:
+                self.log_event(f'Bundle created: {bundle_path}')
                 return bundle_path
             else:
-                self.log_event(f'Bundle verification failed: {verify_result.stderr}', level='ERROR')
+                self.log_event(f'Bundle verification failed: {verify.stderr}', level='ERROR')
                 return None
-
         except subprocess.CalledProcessError as e:
             self.log_event(f'Bundle creation failed: {e.stderr}', level='ERROR')
-            self.log_event(f'Live repo still available at {repo_dir}', level='WARN')
             return None
         except Exception as e:
             self.log_event(f'Unexpected error creating bundle: {e}', level='ERROR')
             return None
 
     def finalize(self) -> None:
-        """Finalize the session (called at end)."""
-        self.log_event('Session ended', level='INFO')
+        """Finalize session: create bundle and update state.json.
+
+        Sets status to 'complete' if bundle created, 'abandoned' otherwise.
+        """
+        self.log_event('Finalizing session...')
+        bundle_path = self.create_bundle()
+        if bundle_path:
+            self.state.mark_complete(bundle_path, self.session_dir)
+            self.log_event('Session complete')
+        else:
+            self.state.mark_abandoned(self.session_dir)
+            self.log_event('Session abandoned (bundle creation failed)', level='WARN')
 
 
 class SessionCleanup:
