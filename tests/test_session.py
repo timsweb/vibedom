@@ -1,74 +1,69 @@
-import tempfile
 import subprocess
 import shutil
 from pathlib import Path
 from vibedom.session import Session, SessionState
 
-def test_session_creation():
+def test_session_creation(tmp_path):
     """Should create session directory with unique ID."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        logs_dir = Path(tmpdir)
-        workspace = Path('/tmp/test')
-        workspace.mkdir(exist_ok=True)
+    workspace = tmp_path / 'test'
+    workspace.mkdir()
+    logs_dir = tmp_path / 'logs'
 
-        session = Session.start(workspace, 'docker', logs_dir)
+    session = Session.start(workspace, 'docker', logs_dir)
 
-        assert session.session_dir.exists()
-        assert session.session_dir.parent == logs_dir
-        assert 'session-' in session.session_dir.name
+    assert session.session_dir.exists()
+    assert session.session_dir.parent == logs_dir
+    assert 'session-' in session.session_dir.name
 
-def test_session_log_network_request():
+def test_session_log_network_request(tmp_path):
     """Should log network requests to network.jsonl."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workspace = Path('/tmp/test')
-        workspace.mkdir(exist_ok=True)
-        session = Session.start(workspace, 'docker', Path(tmpdir))
+    workspace = tmp_path / 'test'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
 
-        session.log_network_request(
-            method='GET',
-            url='https://api.anthropic.com/v1/messages',
-            allowed=True
-        )
+    session.log_network_request(
+        method='GET',
+        url='https://api.anthropic.com/v1/messages',
+        allowed=True
+    )
 
-        log_file = session.session_dir / 'network.jsonl'
-        assert log_file.exists()
+    log_file = session.session_dir / 'network.jsonl'
+    assert log_file.exists()
 
-        import json
-        with open(log_file) as f:
-            entry = json.loads(f.readline())
-            assert entry['method'] == 'GET'
-            assert entry['url'] == 'https://api.anthropic.com/v1/messages'
-            assert entry['allowed'] is True
+    import json
+    with open(log_file) as f:
+        entry = json.loads(f.readline())
+        assert entry['method'] == 'GET'
+        assert entry['url'] == 'https://api.anthropic.com/v1/messages'
+        assert entry['allowed'] is True
 
-def test_session_log_event():
+def test_session_log_event(tmp_path):
     """Should log events to session.log."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workspace = Path('/tmp/test')
-        workspace.mkdir(exist_ok=True)
-        session = Session.start(workspace, 'docker', Path(tmpdir))
+    workspace = tmp_path / 'test'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
 
-        session.log_event('VM started')
-        session.log_event('Pre-flight scan complete', level='INFO')
+    session.log_event('VM started')
+    session.log_event('Pre-flight scan complete', level='INFO')
 
-        log_file = session.session_dir / 'session.log'
-        assert log_file.exists()
+    log_file = session.session_dir / 'session.log'
+    assert log_file.exists()
 
-        content = log_file.read_text()
-        assert 'VM started' in content
-        assert 'Pre-flight scan complete' in content
+    content = log_file.read_text()
+    assert 'VM started' in content
+    assert 'Pre-flight scan complete' in content
 
-def test_session_finalize():
+def test_session_finalize(tmp_path):
     """Should log session end or finalization event."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        workspace = Path('/tmp/test')
-        workspace.mkdir(exist_ok=True)
-        session = Session.start(workspace, 'docker', Path(tmpdir))
-        session.finalize()
+    workspace = tmp_path / 'test'
+    workspace.mkdir()
+    session = Session.start(workspace, 'docker', tmp_path / 'logs')
+    session.finalize()
 
-        log_file = session.session_dir / 'session.log'
-        content = log_file.read_text()
-        # finalize now calls create_bundle which logs events
-        assert 'Session' in content
+    log_file = session.session_dir / 'session.log'
+    content = log_file.read_text()
+    # finalize now calls create_bundle which logs events
+    assert 'Session' in content
 
 def test_create_bundle_success():
     """Bundle created successfully from container repo."""
