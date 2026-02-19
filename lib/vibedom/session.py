@@ -46,8 +46,13 @@ class SessionState:
     def load(cls, session_dir: Path) -> 'SessionState':
         """Load state from session directory."""
         state_file = session_dir / 'state.json'
-        data = json.loads(state_file.read_text())
-        return cls(**data)
+        try:
+            data = json.loads(state_file.read_text())
+            return cls(**data)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Malformed state.json in {session_dir}: {e}") from e
+        except TypeError as e:
+            raise ValueError(f"Invalid state.json schema in {session_dir}: {e}") from e
 
     def save(self, session_dir: Path) -> None:
         """Persist state to session directory."""

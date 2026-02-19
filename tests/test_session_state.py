@@ -30,7 +30,11 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.session_id == state.session_id
     assert loaded.workspace == state.workspace
     assert loaded.runtime == state.runtime
+    assert loaded.container_name == state.container_name
     assert loaded.status == state.status
+    assert loaded.started_at == state.started_at
+    assert loaded.ended_at is None
+    assert loaded.bundle_path is None
 
 
 def test_load_missing_state_raises(tmp_path):
