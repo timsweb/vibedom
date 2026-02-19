@@ -2,9 +2,76 @@
 
 import json
 import subprocess
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+
+@dataclass
+class SessionState:
+    """Represents the persisted state of a session (state.json).
+
+    Example:
+        state = SessionState.create(workspace, 'docker')
+        state.save(session_dir)
+        # later:
+        state = SessionState.load(session_dir)
+    """
+
+    session_id: str
+    workspace: str
+    runtime: str
+    container_name: str
+    status: str          # 'running' | 'complete' | 'abandoned'
+    started_at: str      # ISO 8601 string
+    ended_at: Optional[str] = None
+    bundle_path: Optional[str] = None
+
+    @classmethod
+    def create(cls, workspace: Path, runtime: str) -> 'SessionState':
+        """Create a new SessionState for a fresh session."""
+        from vibedom.words import generate_session_id
+        session_id = generate_session_id(workspace.name)
+        return cls(
+            session_id=session_id,
+            workspace=str(workspace),
+            runtime=runtime,
+            container_name=f'vibedom-{workspace.name}',
+            status='running',
+            started_at=datetime.now().isoformat(timespec='seconds'),
+        )
+
+    @classmethod
+    def load(cls, session_dir: Path) -> 'SessionState':
+        """Load state from session directory."""
+        state_file = session_dir / 'state.json'
+        data = json.loads(state_file.read_text())
+        return cls(**data)
+
+    def save(self, session_dir: Path) -> None:
+        """Persist state to session directory."""
+        state_file = session_dir / 'state.json'
+        state_file.write_text(json.dumps(asdict(self), indent=2))
+
+    def mark_complete(self, bundle_path: Path, session_dir: Path) -> None:
+        """Transition to complete status and persist."""
+        self.status = 'complete'
+        self.ended_at = datetime.now().isoformat(timespec='seconds')
+        self.bundle_path = str(bundle_path)
+        self.save(session_dir)
+
+    def mark_abandoned(self, session_dir: Path) -> None:
+        """Transition to abandoned status and persist."""
+        self.status = 'abandoned'
+        self.ended_at = datetime.now().isoformat(timespec='seconds')
+        self.save(session_dir)
+
+    @property
+    def started_at_dt(self) -> datetime:
+        """started_at as a datetime object."""
+        return datetime.fromisoformat(self.started_at)
+
 
 class Session:
     """Manages a sandbox session with logging."""
