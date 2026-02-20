@@ -23,6 +23,9 @@ vibedom = "vibedom.cli:main"
 [tool.setuptools.packages.find]
 where = ["lib"]
 
+[tool.setuptools.package-data]
+vibedom = ["container/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["lib", "vm"]

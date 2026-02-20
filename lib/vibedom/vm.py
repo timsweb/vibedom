@@ -69,15 +69,15 @@ class VMManager:
             runtime: Container runtime ('docker' or 'apple'), or None for auto-detect
         """
         _, runtime_cmd = VMManager._detect_runtime(runtime)
-        vm_dir = Path(__file__).parent.parent.parent / 'vm'
-        dockerfile = vm_dir / 'Dockerfile.alpine'
+        container_dir = Path(__file__).parent / 'container'
+        dockerfile = container_dir / 'Dockerfile.alpine'
 
         if not dockerfile.exists():
             raise RuntimeError(f"Dockerfile not found at {dockerfile}")
 
         subprocess.run(
             [runtime_cmd, 'build', '-t', 'vibedom-alpine:latest',
-             '-f', str(dockerfile), str(vm_dir)],
+             '-f', str(dockerfile), str(container_dir)],
             check=True
         )
 
@@ -87,12 +87,13 @@ class VMManager:
         self.stop()
 
         # Copy mitmproxy addon to config dir
-        addon_src = Path(__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
+        container_dir = Path(__file__).parent / 'container'
+        addon_src = container_dir / 'mitmproxy_addon.py'
         addon_dst = self.config_dir / 'mitmproxy_addon.py'
         shutil.copy(addon_src, addon_dst)
 
         # Copy DLP scrubber module to config dir
-        scrubber_src = Path(__file__).parent.parent.parent / 'vm' / 'dlp_scrubber.py'
+        scrubber_src = container_dir / 'dlp_scrubber.py'
         scrubber_dst = self.config_dir / 'dlp_scrubber.py'
         shutil.copy(scrubber_src, scrubber_dst)
 
