@@ -450,6 +450,33 @@ def test_attach_uses_container_cmd_for_apple(tmp_path):
     assert cmd[0] == 'container'
 
 
+def test_attach_rejects_non_running_session(tmp_path):
+    """attach should reject sessions that are not running."""
+    import json
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260219-100000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(json.dumps({
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'docker',
+        'container_name': 'vibedom-myapp',
+        'status': 'complete',  # not running
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': '2026-02-19T11:00:00',
+        'bundle_path': None,
+    }))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        result = runner.invoke(main, ['attach', 'myapp-happy-turing'])
+
+    assert result.exit_code != 0
+    assert 'not running' in result.output
+
+
 def test_run_writes_state_json(tmp_path):
     """vibedom run should write state.json to the session directory."""
     workspace = tmp_path / 'myapp'

@@ -255,6 +255,14 @@ def attach(session_id):
 
     session = registry.resolve(session_id, running_only=True, sessions=running)
 
+    if session.state.status != 'running':
+        click.secho(
+            f"Session '{session.state.session_id}' is not running "
+            f"(status: {session.state.status})",
+            fg='red'
+        )
+        sys.exit(1)
+
     runtime_cmd = 'container' if session.state.runtime == 'apple' else 'docker'
     cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
            session.state.container_name, 'bash']
