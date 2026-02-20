@@ -141,10 +141,16 @@ def test_start_uses_apple_runtime(test_workspace, test_config):
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        try:
-            vm.start()
-        except RuntimeError:
-            pass
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
 
         calls = mock_run.call_args_list
         run_call = next(c for c in calls if 'run' in c[0][0])
@@ -161,10 +167,16 @@ def test_start_uses_docker_runtime(test_workspace, test_config):
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        try:
-            vm.start()
-        except RuntimeError:
-            pass
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
 
         calls = mock_run.call_args_list
         run_call = next(c for c in calls if 'run' in c[0][0])
@@ -229,10 +241,15 @@ def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass  # May fail on readiness check, that's ok
+                with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+                    mock_proxy = MagicMock()
+                    mock_proxy.start.return_value = 54321
+                    mock_proxy.ca_cert_path = None
+                    mock_proxy_cls.return_value = mock_proxy
+                    try:
+                        vm.start()
+                    except RuntimeError:
+                        pass  # May fail on readiness check, that's ok
 
             # Find the 'run' call
             calls = mock_run.call_args_list
@@ -258,10 +275,92 @@ def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tm
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             with patch('shutil.copy'):
+                with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+                    mock_proxy = MagicMock()
+                    mock_proxy.start.return_value = 54321
+                    mock_proxy.ca_cert_path = None
+                    mock_proxy_cls.return_value = mock_proxy
+                    try:
+                        vm.start()
+                    except RuntimeError:
+                        pass
+
+            # Should still succeed, just without Claude mounts
+            assert mock_run.called
+
+
+def test_vm_start_uses_host_proxy(tmp_path):
+    """VMManager.start() should start ProxyManager and pass port to container."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    config_dir = tmp_path / 'config'
+    config_dir.mkdir()
+    session_dir = tmp_path / 'session'
+    session_dir.mkdir()
+
+    vm = VMManager(workspace, config_dir, session_dir, runtime='docker')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = tmp_path / 'cert.pem'
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
                 try:
                     vm.start()
                 except RuntimeError:
                     pass
 
-            # Should still succeed, just without Claude mounts
-            assert mock_run.called
+        assert mock_proxy.start.called
+        run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+        assert run_calls, "Expected a 'docker run' call"
+        cmd = ' '.join(run_calls[0][0][0])
+        assert 'host.docker.internal' in cmd
+        assert '54321' in cmd
+
+
+def test_vm_start_with_project_network(tmp_path):
+    """VMManager.start() should add --network flag when network specified."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                   runtime='docker', network='wapi_shared')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+        run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+        assert run_calls, "Expected a 'docker run' call"
+        cmd = ' '.join(run_calls[0][0][0])
+        assert '--network' in cmd
+        assert 'wapi_shared' in cmd
+
+
+def test_vm_stop_stops_proxy(tmp_path):
+    """VMManager.stop() should stop the ProxyManager."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                   runtime='docker')
+
+    mock_proxy = MagicMock()
+    vm._proxy = mock_proxy
+
+    with patch('subprocess.run', return_value=MagicMock(returncode=0)):
+        vm.stop()
+
+    assert mock_proxy.stop.called
