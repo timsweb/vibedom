@@ -72,11 +72,26 @@ vibedom run ~/projects/myapp
 
 This will:
 1. Scan the workspace for secrets (Gitleaks) and show findings for review
-2. Start the container with the workspace mounted read-only
-3. Clone your git repository into an isolated session
-4. Start mitmproxy for network control
+2. Start mitmproxy on the host as a dedicated proxy process
+3. Start the container with the workspace mounted read-only
+4. Clone your git repository into an isolated session
 
 On startup, vibedom prints a **session ID** (e.g. `myapp-happy-turing`) — use this to refer to the session in subsequent commands.
+
+## Project Integration (vibedom.yml)
+
+For projects with existing Docker images and shared networks, add a `vibedom.yml` to your workspace root:
+
+```yaml
+base_image: wapi-php-fpm:latest   # use your project's image instead of Alpine
+network: wapi_shared_network      # join this docker network (for DB, Redis, etc.)
+```
+
+`vibedom run` will detect this file and:
+1. Build a thin vibedom layer on top of your `base_image`
+2. Connect the container to `network` (so artisan, rails console, etc. can reach the database)
+
+The read-only workspace mount, git clone to `/work/repo`, and git bundle workflow are unchanged — your original files remain protected.
 
 ## Working in the Session
 

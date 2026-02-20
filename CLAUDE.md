@@ -19,12 +19,15 @@
     - Claude Code CLI pre-installed with persistent config volume
     - Health check polling for VM readiness
 
-2. **Network Control** (`lib/vibedom/container/mitmproxy_addon.py`, `lib/vibedom/container/startup.sh`)
-   - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
+2. **Network Control** (`lib/vibedom/proxy.py`, `lib/vibedom/container/mitmproxy_addon.py`)
+   - ProxyManager starts mitmproxy as a **host process** (not inside the container)
+   - One process per session on an OS-assigned port (no hardcoded ports)
+   - Port and PID stored in session state.json for whitelist reload
+   - Container receives `HTTP_PROXY=http://host.docker.internal:<port>` and CA cert via `/mnt/config/mitmproxy/`
    - Domain whitelist enforcement with subdomain support
-   - Whitelist reload via SIGHUP (no container restart required)
+   - Whitelist reload via `os.kill(proxy_pid, SIGHUP)` — no docker exec needed
    - Supports both HTTP and HTTPS traffic
-   - DLP scrubber for secret and PII detection in HTTP traffic
+   - DLP scrubber for secret and PII detection in outbound HTTP traffic
    - Logs all requests to session directory (`network.jsonl`)
 
 3. **Secret Detection** (`lib/vibedom/gitleaks.py`)
