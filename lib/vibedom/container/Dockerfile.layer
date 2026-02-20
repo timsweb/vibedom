@@ -1,0 +1,22 @@
+# Vibedom layer — built on top of a project's base image at runtime
+# ARG BASE_IMAGE is passed by VMManager.build_project_image()
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Install git if not already present.
+# Tries apt-get (Debian/Ubuntu) then apk (Alpine) — ignores failure if git already installed.
+RUN command -v git >/dev/null 2>&1 || \
+    (apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates 2>/dev/null) || \
+    (apk add --no-cache git ca-certificates 2>/dev/null) || true
+
+# Ensure CA cert directory exists (for update-ca-certificates in startup.sh)
+RUN mkdir -p /usr/local/share/ca-certificates
+
+# Create required vibedom mount points
+RUN mkdir -p /mnt/workspace /work /mnt/config /mnt/session
+
+# Copy vibedom startup script
+COPY startup.sh /usr/local/bin/vibedom-startup.sh
+RUN chmod +x /usr/local/bin/vibedom-startup.sh
+
+CMD ["/usr/local/bin/vibedom-startup.sh"]
