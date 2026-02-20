@@ -404,6 +404,57 @@ If omitted, stops all vibedom containers.
 
 ---
 
+## Session Cleanup - Deferred Improvements
+
+**Status:** Deferred
+**Created:** 2026-02-18
+**Priority:** Low
+
+### 1. Missing Test Coverage for prune/housekeeping (Low Priority)
+
+**Issue:** Two code paths have no automated test coverage:
+- `vibedom prune --force` and `vibedom housekeeping --force`: the force path deletes without prompting and is the most consequential code path, but has no test.
+- `vibedom prune` when `~/.vibedom/logs` does not exist: expected output is "No sessions to delete" but this is not verified by any test.
+
+**Location:** `tests/test_prune.py`
+
+**Recommendation:** Add tests:
+```python
+def test_prune_force_deletes_without_prompting(...):
+    # verify sessions deleted without click.confirm call
+
+def test_prune_no_logs_directory(runner):
+    result = runner.invoke(main, ['prune'])
+    assert result.exit_code == 0
+    assert 'No sessions to delete' in result.output
+```
+
+**Estimated Effort:** 20 minutes
+
+---
+
+### 2. Missing click.secho Warnings for Skipped Sessions (Low Priority)
+
+**Issue:** The original design spec required `click.secho()` warnings when sessions are skipped due to invalid directory names, malformed timestamps, or future-dated timestamps. The implementation silently skips these cases instead.
+
+**Location:** `lib/vibedom/session.py` - `find_all_sessions()` and `_filter_by_age()`
+
+**Current Behavior:** Sessions with bad names or malformed timestamps are silently skipped.
+
+**Recommendation:**
+```python
+timestamp = SessionCleanup._parse_timestamp(session_dir.name)
+if timestamp is None:
+    click.secho(f"Warning: skipping {session_dir.name} (unrecognised name format)", fg='yellow', err=True)
+    continue
+```
+
+**Impact:** Improves debuggability when session directories have unexpected names (e.g. manually created or corrupted).
+
+**Estimated Effort:** 15 minutes
+
+---
+
 ## Future Considerations
 
 ### Log Rotation
