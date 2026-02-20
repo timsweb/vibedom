@@ -66,3 +66,26 @@ def test_response_body_not_scrubbed(mock_mkdir):
 
     # Response content should remain unchanged (no scrubbing)
     assert flow.response.content == b'{"api_key": "AKIAIOSFODNN7EXAMPLE"}'
+
+
+def test_addon_reads_whitelist_from_env(tmp_path, monkeypatch):
+    """VibedomProxy should read whitelist path from VIBEDOM_WHITELIST_PATH env var."""
+    whitelist = tmp_path / 'domains.txt'
+    whitelist.write_text('example.com\n')
+    monkeypatch.setenv('VIBEDOM_WHITELIST_PATH', str(whitelist))
+    monkeypatch.setenv('VIBEDOM_NETWORK_LOG_PATH', str(tmp_path / 'network.jsonl'))
+
+    from mitmproxy_addon import VibedomProxy
+    proxy = VibedomProxy()
+    assert 'example.com' in proxy.whitelist
+
+
+def test_addon_reads_network_log_from_env(tmp_path, monkeypatch):
+    """VibedomProxy should write network log to VIBEDOM_NETWORK_LOG_PATH."""
+    log_path = tmp_path / 'network.jsonl'
+    monkeypatch.setenv('VIBEDOM_NETWORK_LOG_PATH', str(log_path))
+    monkeypatch.setenv('VIBEDOM_WHITELIST_PATH', str(tmp_path / 'domains.txt'))
+
+    from mitmproxy_addon import VibedomProxy
+    proxy = VibedomProxy()
+    assert proxy.network_log_path == log_path

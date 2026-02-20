@@ -1,6 +1,7 @@
 """Mitmproxy addon for enforcing whitelist and DLP scrubbing."""
 
 import json
+import os
 import signal
 import sys
 from pathlib import Path
@@ -39,12 +40,18 @@ class VibedomProxy:
     def __init__(self):
         self.whitelist = self.load_whitelist()
         # Write to session directory instead of container-local /var/log
-        self.network_log_path = Path('/mnt/session/network.jsonl')
+        network_log = os.environ.get(
+            'VIBEDOM_NETWORK_LOG_PATH', '/mnt/session/network.jsonl'
+        )
+        self.network_log_path = Path(network_log)
         self.network_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Initialize DLP scrubber
-        gitleaks_config = Path(__file__).parent / 'gitleaks.toml'
-        config_path = str(gitleaks_config) if gitleaks_config.exists() else None
+        gitleaks_config = os.environ.get(
+            'VIBEDOM_GITLEAKS_CONFIG',
+            str(Path(__file__).parent / 'gitleaks.toml')
+        )
+        config_path = gitleaks_config if Path(gitleaks_config).exists() else None
         self.scrubber = DLPScrubber(gitleaks_config=config_path)
 
         # Register SIGHUP handler for whitelist reload
@@ -52,7 +59,9 @@ class VibedomProxy:
 
     def load_whitelist(self) -> set:
         """Load whitelist from mounted config."""
-        whitelist_path = Path('/mnt/config/trusted_domains.txt')
+        whitelist_path = Path(
+            os.environ.get('VIBEDOM_WHITELIST_PATH', '/mnt/config/trusted_domains.txt')
+        )
         if not whitelist_path.exists():
             return set()
 
