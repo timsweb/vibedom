@@ -2,8 +2,7 @@ import json
 import pytest
 import click
 from pathlib import Path
-from unittest.mock import patch
-from vibedom.session import Session, SessionRegistry
+from vibedom.session import SessionRegistry
 
 
 def make_session_dir(logs_dir, name, workspace='/Users/test/myapp',
@@ -128,3 +127,15 @@ def test_resolve_no_sessions_raises(tmp_path):
     registry = SessionRegistry(tmp_path)
     with pytest.raises(click.ClickException):
         registry.resolve(None)
+
+
+def test_resolve_running_only_auto_selects_single(tmp_path):
+    """resolve with running_only=True auto-selects the single running session."""
+    make_session_dir(tmp_path, 'session-20260219-100000-000000',
+                     status='running', session_id='myapp-happy-turing')
+    make_session_dir(tmp_path, 'session-20260219-090000-000000',
+                     status='complete', session_id='myapp-old-complete')
+    registry = SessionRegistry(tmp_path)
+    running = registry.running()
+    session = registry.resolve(None, running_only=True, sessions=running)
+    assert session.state.session_id == 'myapp-happy-turing'
