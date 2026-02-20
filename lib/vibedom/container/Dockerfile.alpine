@@ -8,15 +8,12 @@ RUN apk add --no-cache \
     bash \
     openssh \
     git \
-    python3 \
-    py3-pip \
     curl \
     sudo \
     rsync \
     diffutils \
     ca-certificates \
-    ca-certificates-bundle \
-    mitmproxy
+    ca-certificates-bundle
 
 # Install Claude Code dependencies (Alpine/musl requirements)
 RUN apk add --no-cache libgcc libstdc++ ripgrep
