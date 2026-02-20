@@ -183,8 +183,8 @@ def stop(session_id):
         click.echo("\n✅ Session complete!")
         click.echo(f"📋 Session ID: {session.state.session_id}")
         click.echo(f"📦 Bundle: {bundle_path}")
-        click.echo(f"\n📋 To review: vibedom review {session.state.workspace}")
-        click.echo(f"🔀 To merge:  vibedom merge {session.state.workspace}")
+        click.echo(f"\n📋 To review: vibedom review {session.state.session_id}")
+        click.echo(f"🔀 To merge:  vibedom merge {session.state.session_id}")
     else:
         click.secho("⚠️  Bundle creation failed", fg='yellow')
         click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
@@ -254,15 +254,23 @@ def attach(session_id):
 
 
 @main.command('review')
-@click.argument('workspace', type=click.Path(exists=True))
+@click.argument('session_id')
 @click.option('--branch', help='Branch to review from bundle (default: current branch)')
-def review(workspace: str, branch: Optional[str]) -> None:
-    """Review changes from most recent session."""
-    workspace_path = Path(workspace).resolve()
+def review(session_id: str, branch: Optional[str]) -> None:
+    """Review changes from a session bundle.
 
-    if not workspace_path.is_dir():
-        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
+    SESSION_ID is a session ID (e.g. myapp-happy-turing) or workspace name.
+    """
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    session_obj = registry.find(session_id)
+
+    if not session_obj:
+        click.secho(f"❌ No session found for '{session_id}'", fg='red')
         sys.exit(1)
+
+    workspace_path = Path(session_obj.state.workspace)
+    session_dir = session_obj.session_dir
 
     # Check if workspace is a git repository
     try:
@@ -273,18 +281,6 @@ def review(workspace: str, branch: Optional[str]) -> None:
     except subprocess.CalledProcessError:
         click.secho(f"❌ Error: {workspace_path} is not a git repository", fg='red')
         sys.exit(1)
-
-    # Find latest session via registry
-    logs_dir = Path.home() / '.vibedom' / 'logs'
-    registry = SessionRegistry(logs_dir)
-    session_obj = registry.find(workspace_path.name)
-
-    if not session_obj:
-        click.secho(f"❌ No session found for {workspace_path.name}", fg='red')
-        click.echo(f"Run 'vibedom run {workspace_path}' first.")
-        sys.exit(1)
-
-    session_dir = session_obj.session_dir
 
     # Check if session is still running
     if session_obj.is_container_running():
@@ -376,21 +372,28 @@ def review(workspace: str, branch: Optional[str]) -> None:
         click.echo("  (no changes)")
 
     # Show merge hint
-    click.echo(f"\n💡 To merge: vibedom merge {workspace_path}")
+    click.echo(f"\n💡 To merge: vibedom merge {session_obj.state.session_id}")
 
 
 @main.command('merge')
-@click.argument('workspace', type=click.Path(exists=True))
+@click.argument('session_id')
 @click.option('--branch', help='Branch to merge from bundle (default: current branch)')
 @click.option('--merge', 'keep_history', is_flag=True,
               help='Keep full commit history (default: squash)')
-def merge(workspace: str, branch: Optional[str], keep_history: bool) -> None:
-    """Merge changes from most recent session (squash by default)."""
-    workspace_path = Path(workspace).resolve()
+def merge(session_id: str, branch: Optional[str], keep_history: bool) -> None:
+    """Merge changes from a session bundle (squash by default).
 
-    if not workspace_path.is_dir():
-        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
+    SESSION_ID is a session ID (e.g. myapp-happy-turing) or workspace name.
+    """
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    session_obj = registry.find(session_id)
+
+    if not session_obj:
+        click.secho(f"❌ No session found for '{session_id}'", fg='red')
         sys.exit(1)
+
+    workspace_path = Path(session_obj.state.workspace)
 
     # Check if workspace is a git repository
     try:
@@ -410,16 +413,6 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool) -> None:
     if result.stdout.strip():
         click.secho("❌ Cannot merge: you have uncommitted changes", fg='red')
         click.echo("Commit or stash them first, then try again.")
-        sys.exit(1)
-
-    # Find latest session via registry
-    logs_dir = Path.home() / '.vibedom' / 'logs'
-    registry = SessionRegistry(logs_dir)
-    session_obj = registry.find(workspace_path.name)
-
-    if not session_obj:
-        click.secho(f"❌ No session found for {workspace_path.name}", fg='red')
-        click.echo(f"Run 'vibedom run {workspace_path}' first.")
         sys.exit(1)
 
     if session_obj.is_container_running():

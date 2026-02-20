@@ -118,7 +118,7 @@ def test_review_command_success(tmp_path):
                 MagicMock(returncode=0, stdout='diff content\n'),  # git diff
             ]
 
-            result = runner.invoke(main, ['review', str(workspace)])
+            result = runner.invoke(main, ['review', 'myapp-happy-turing'])
 
             assert result.exit_code == 0
             assert 'myapp-happy-turing' in result.output
@@ -133,23 +133,16 @@ def test_review_command_success(tmp_path):
 
 def test_review_no_session_found(tmp_path):
     """review should error if no session found."""
-    workspace = tmp_path / 'myapp'
-    workspace.mkdir()
-
     # No session dirs created - registry will find nothing
     runner = CliRunner()
 
     with patch('vibedom.cli.Path.home') as mock_home:
         mock_home.return_value = tmp_path
 
-        with patch('subprocess.run') as mock_run:
-            # Mock git check to pass
-            mock_run.return_value = MagicMock(returncode=0)
+        result = runner.invoke(main, ['review', 'nonexistent-session'])
 
-            result = runner.invoke(main, ['review', str(workspace)])
-
-            assert result.exit_code == 1
-            assert 'No session found' in result.output
+        assert result.exit_code == 1
+        assert 'No session found' in result.output
 
 
 def test_review_fails_if_session_running(tmp_path):
@@ -176,7 +169,7 @@ def test_review_fails_if_session_running(tmp_path):
                 MagicMock(returncode=0, stdout='vibedom-myapp\n'),  # docker ps (running)
             ]
 
-            result = runner.invoke(main, ['review', str(workspace)])
+            result = runner.invoke(main, ['review', 'myapp-happy-turing'])
 
             assert result.exit_code == 1
             assert 'still running' in result.output
@@ -205,7 +198,7 @@ def test_review_fails_if_bundle_missing(tmp_path):
                 MagicMock(returncode=0),  # git rev-parse (is git repo)
             ]
 
-            result = runner.invoke(main, ['review', str(workspace)])
+            result = runner.invoke(main, ['review', 'myapp-happy-turing'])
 
             assert result.exit_code == 1
             assert 'Bundle not found' in result.output
@@ -216,16 +209,24 @@ def test_review_fails_if_not_git_repo(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_complete_state(workspace))
+
     runner = CliRunner()
 
-    with patch('subprocess.run') as mock_run:
-        # Mock git check to fail
-        mock_run.side_effect = subprocess.CalledProcessError(128, 'git rev-parse')
+    with patch('vibedom.cli.Path.home') as mock_home:
+        mock_home.return_value = tmp_path
 
-        result = runner.invoke(main, ['review', str(workspace)])
+        with patch('subprocess.run') as mock_run:
+            # Mock git repo check to fail
+            mock_run.side_effect = subprocess.CalledProcessError(128, 'git rev-parse')
 
-        assert result.exit_code == 1
-        assert 'not a git repository' in result.output
+            result = runner.invoke(main, ['review', 'myapp-happy-turing'])
+
+            assert result.exit_code == 1
+            assert 'not a git repository' in result.output
 
 
 def test_review_fails_on_git_remote_add_error(tmp_path):
@@ -257,7 +258,7 @@ def test_review_fails_on_git_remote_add_error(tmp_path):
                 subprocess.CalledProcessError(128, 'git remote add'),  # git remote add fails
             ]
 
-            result = runner.invoke(main, ['review', str(workspace)])
+            result = runner.invoke(main, ['review', 'myapp-happy-turing'])
 
             assert result.exit_code == 1
             assert 'Failed to add git remote' in result.output
@@ -298,7 +299,7 @@ def test_merge_command_squash(tmp_path):
                 MagicMock(returncode=0),  # git remote remove
             ]
 
-            result = runner.invoke(main, ['merge', str(workspace)])
+            result = runner.invoke(main, ['merge', 'myapp-happy-turing'])
 
             assert result.exit_code == 0
             # Verify squash merge was called
@@ -341,7 +342,7 @@ def test_merge_command_keep_history(tmp_path):
                 MagicMock(returncode=0),  # git remote remove
             ]
 
-            result = runner.invoke(main, ['merge', str(workspace), '--merge'])
+            result = runner.invoke(main, ['merge', 'myapp-happy-turing', '--merge'])
 
             assert result.exit_code == 0
             # Verify regular merge (no --squash)
@@ -357,6 +358,11 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-130000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_complete_state(workspace))
+
     runner = CliRunner()
 
     with patch('vibedom.cli.Path.home') as mock_home:
@@ -368,7 +374,7 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
                 MagicMock(returncode=0, stdout=' M file.txt\n'),  # git status returns dirty state
             ]
 
-            result = runner.invoke(main, ['merge', str(workspace)])
+            result = runner.invoke(main, ['merge', 'myapp-happy-turing'])
 
             assert result.exit_code == 1
             assert 'uncommitted changes' in result.output
@@ -402,7 +408,7 @@ def test_merge_fails_if_session_running(tmp_path):
                 MagicMock(returncode=0, stdout=''),  # git status --porcelain (clean)
             ]
             with patch('vibedom.session.Session.is_container_running', return_value=True):
-                result = runner.invoke(main, ['merge', str(workspace)])
+                result = runner.invoke(main, ['merge', 'myapp-happy-turing'])
 
     assert result.exit_code == 1
     assert 'running' in result.output.lower()
