@@ -1,139 +1,84 @@
-"""Tests for session cleanup functionality."""
-
-import pytest
+"""Tests for SessionCleanup filter and delete helpers."""
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
-from vibedom.session import SessionCleanup
+from vibedom.session import Session, SessionCleanup
 
 
-def test_class_exists():
-    """Test that SessionCleanup class exists."""
-    assert hasattr(SessionCleanup, 'find_all_sessions')
+def make_session(logs_dir, name, status='complete', days_old=0,
+                 workspace='/Users/test/myapp'):
+    """Create a session directory with state.json for testing."""
+    d = logs_dir / name
+    d.mkdir(parents=True)
+    ws_name = Path(workspace).name
+    started = (datetime.now() - timedelta(days=days_old)).isoformat(timespec='seconds')
+    state = {
+        'session_id': f'{ws_name}-happy-turing',
+        'workspace': workspace,
+        'runtime': 'docker',
+        'container_name': f'vibedom-{ws_name}',
+        'status': status,
+        'started_at': started,
+        'ended_at': None,
+        'bundle_path': None,
+    }
+    (d / 'state.json').write_text(json.dumps(state))
+    return Session.load(d)
 
 
-def test_parse_timestamp_valid():
-    """Test timestamp parsing from valid directory name."""
-    timestamp = SessionCleanup._parse_timestamp('session-20260216-171057-123456')
-    assert timestamp == datetime(2026, 2, 16, 17, 10, 57, 123456)
-
-
-def test_parse_timestamp_invalid():
-    """Test timestamp parsing from invalid directory name."""
-    timestamp = SessionCleanup._parse_timestamp('invalid-name')
-    assert timestamp is None
-
-
-def test_extract_workspace_valid(tmp_path):
-    """Test workspace extraction from valid session.log."""
-    session_log = tmp_path / 'session.log'
-    session_log.write_text('Session started for workspace: /Users/test/workspace')
-    workspace = SessionCleanup._extract_workspace(tmp_path)
-    assert workspace == Path('/Users/test/workspace')
-
-
-def test_extract_workspace_no_log(tmp_path):
-    """Test workspace extraction when session.log is missing."""
-    workspace = SessionCleanup._extract_workspace(tmp_path)
-    assert workspace is None
-
-
-def test_extract_workspace_no_workspace_line(tmp_path):
-    """Test workspace extraction when log has no workspace line."""
-    session_log = tmp_path / 'session.log'
-    session_log.write_text('Some other log line')
-    workspace = SessionCleanup._extract_workspace(tmp_path)
-    assert workspace is None
-
-
-def test_is_container_running_true():
-    """Test container detection when container is running."""
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = MagicMock(stdout='vibedom-test\n')
-        result = SessionCleanup._is_container_running(Path('/Users/test'), 'docker')
-        assert result is True
-
-
-def test_is_container_running_false():
-    """Test container detection when container is not running."""
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = MagicMock(stdout='')
-        result = SessionCleanup._is_container_running(Path('/Users/test'), 'docker')
-        assert result is False
-
-
-def test_is_container_running_error():
-    """Test container detection on error (assume not running)."""
-    with patch('subprocess.run') as mock_run:
-        mock_run.side_effect = Exception('Runtime error')
-        result = SessionCleanup._is_container_running(Path('/Users/test'), 'docker')
-        assert result is False
-
-
-def test_find_all_sessions(tmp_path):
-    """Test session discovery returns all sessions."""
-    session1 = tmp_path / 'session-20260216-171057-123456'
-    session2 = tmp_path / 'session-20260217-171057-123456'
-    session1.mkdir()
-    session2.mkdir()
-
-    log1 = session1 / 'session.log'
-    log1.write_text('Session started for workspace: /Users/test/workspace1')
-    log2 = session2 / 'session.log'
-    log2.write_text('Session started for workspace: /Users/test/workspace2')
-
-    with patch.object(SessionCleanup, '_is_container_running', return_value=False):
-        sessions = SessionCleanup.find_all_sessions(tmp_path)
-
-    assert len(sessions) == 2
-    assert all('dir' in s for s in sessions)
-    assert all('timestamp' in s for s in sessions)
-    assert all('workspace' in s for s in sessions)
-    assert all('is_running' in s for s in sessions)
-    assert sessions[0]['dir'].name == 'session-20260217-171057-123456'
-
-
-def test_filter_by_age():
-    """Test age-based filtering."""
+def test_filter_by_age_returns_old_sessions(tmp_path):
     sessions = [
-        {'timestamp': datetime.now() - timedelta(days=10)},
-        {'timestamp': datetime.now() - timedelta(days=5)},
-        {'timestamp': datetime.now() - timedelta(days=7, seconds=1)},
+        make_session(tmp_path, 'session-a', days_old=10),
+        make_session(tmp_path, 'session-b', days_old=5),
+        make_session(tmp_path, 'session-c', days_old=8),
     ]
     old = SessionCleanup._filter_by_age(sessions, days=7)
     assert len(old) == 2
 
 
-def test_filter_by_age_future():
-    """Test filtering skips future-dated sessions."""
-    sessions = [
-        {'timestamp': datetime.now() + timedelta(days=1)},
-        {'timestamp': datetime.now() - timedelta(days=10)},
-    ]
-    old = SessionCleanup._filter_by_age(sessions, days=7)
-    assert len(old) == 1
-    assert old[0]['timestamp'] < datetime.now()
+def test_filter_by_age_excludes_recent(tmp_path):
+    sessions = [make_session(tmp_path, 'session-a', days_old=2)]
+    assert SessionCleanup._filter_by_age(sessions, days=7) == []
 
 
-def test_filter_not_running():
-    """Test filter for non-running containers."""
+def test_filter_not_running_excludes_running_status(tmp_path):
     sessions = [
-        {'is_running': True, 'dir': Path('/a')},
-        {'is_running': False, 'dir': Path('/b')},
-        {'is_running': True, 'dir': Path('/c')},
+        make_session(tmp_path, 'session-a', status='running'),
+        make_session(tmp_path, 'session-b', status='complete'),
+        make_session(tmp_path, 'session-c', status='abandoned'),
     ]
     not_running = SessionCleanup._filter_not_running(sessions)
-    assert len(not_running) == 1
-    assert not_running[0]['dir'] == Path('/b')
+    assert len(not_running) == 2
+    assert all(s.state.status != 'running' for s in not_running)
+
+
+def test_filter_not_running_does_not_call_subprocess(tmp_path):
+    """_filter_not_running uses state.status only, no subprocess call."""
+    from unittest.mock import patch
+    sessions = [
+        make_session(tmp_path, 'session-a', status='complete'),
+    ]
+    with patch('subprocess.run') as mock_run:
+        SessionCleanup._filter_not_running(sessions)
+        mock_run.assert_not_called()
 
 
 def test_delete_session(tmp_path):
-    """Test session directory deletion."""
-    (tmp_path / 'file.txt').write_text('test')
-    SessionCleanup._delete_session(tmp_path)
-    assert not tmp_path.exists()
+    d = tmp_path / 'session-to-delete'
+    d.mkdir()
+    (d / 'file.txt').write_text('test')
+    SessionCleanup._delete_session(d)
+    assert not d.exists()
 
 
-def test_delete_session_error(tmp_path):
-    """Test deletion error is handled gracefully."""
-    SessionCleanup._delete_session(tmp_path)
+def test_delete_session_handles_missing_dir(tmp_path):
+    # Should not raise
+    SessionCleanup._delete_session(tmp_path / 'nonexistent')
+
+
+def test_removed_methods_do_not_exist():
+    """Verify the old methods have been removed."""
+    assert not hasattr(SessionCleanup, '_parse_timestamp')
+    assert not hasattr(SessionCleanup, '_extract_workspace')
+    assert not hasattr(SessionCleanup, '_is_container_running')
+    assert not hasattr(SessionCleanup, 'find_all_sessions')

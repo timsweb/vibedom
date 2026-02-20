@@ -22,7 +22,7 @@ def scan_workspace(workspace: Path) -> List[Dict[str, Any]]:
         report_path = Path('/tmp/claude/gitleaks-report.json')
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
-        result = subprocess.run([
+        subprocess.run([
             'gitleaks',
             'detect',
             '--source', str(workspace),
@@ -41,7 +41,7 @@ def scan_workspace(workspace: Path) -> List[Dict[str, Any]]:
 
         return []
 
-    except Exception as e:
+    except Exception:
         # If Gitleaks fails, don't block - just warn
         return []
 
