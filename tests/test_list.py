@@ -38,6 +38,8 @@ def test_list_shows_sessions(tmp_path):
     assert 'ifs-bridge-calm-lovelace' in result.output
     assert 'running' in result.output
     assert 'complete' in result.output
+    assert 'ID' in result.output
+    assert 'ago' in result.output
 
 
 def test_list_no_sessions(tmp_path):

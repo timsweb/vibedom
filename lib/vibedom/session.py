@@ -151,16 +151,14 @@ class Session:
         """Human-readable age of this session (e.g. '2h ago', '3d ago')."""
         age = datetime.now() - self.state.started_at_dt
         if age.days > 0:
-            n = age.days
-            return f"{n} day{'s' if n > 1 else ''} ago"
+            return f"{age.days}d ago"
         hours = age.seconds // 3600
         if hours > 0:
-            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+            return f"{hours}h ago"
         minutes = age.seconds // 60
         if minutes > 0:
-            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-        n = age.seconds
-        return f"{n} second{'s' if n != 1 else ''} ago"
+            return f"{minutes}m ago"
+        return f"{age.seconds}s ago"
 
     @property
     def display_name(self) -> str:

@@ -193,12 +193,10 @@ def test_session_not_running_for_complete_status(tmp_path):
         mock_run.assert_not_called()
 
 def test_session_age_str(tmp_path):
-    """age_str returns human-readable age."""
-    workspace = tmp_path / 'myapp'
-    workspace.mkdir()
-    session = Session.start(workspace, 'docker', tmp_path / 'logs')
-    age = session.age_str
-    assert any(unit in age for unit in ('second', 'minute', 'hour', 'day'))
+    """age_str should return human-readable age."""
+    session = Session.start(tmp_path / 'myapp', 'docker', tmp_path / 'logs')
+    # Just started — should be seconds old
+    assert 's ago' in session.age_str or 'm ago' in session.age_str
 
 def test_session_display_name(tmp_path):
     """display_name includes session_id and status."""
