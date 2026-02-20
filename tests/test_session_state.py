@@ -34,6 +34,8 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.started_at == state.started_at
     assert loaded.ended_at is None
     assert loaded.bundle_path is None
+    assert loaded.proxy_port is None
+    assert loaded.proxy_pid is None
 
 
 def test_load_missing_state_raises(tmp_path):

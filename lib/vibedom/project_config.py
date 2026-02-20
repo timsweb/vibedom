@@ -22,7 +22,7 @@ class ProjectConfig:
         if not config_file.exists():
             return None
 
-        with open(config_file) as f:
+        with open(config_file, encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}
 
         unknown = set(data.keys()) - KNOWN_FIELDS
