@@ -1,3 +1,6 @@
+import json
+import os
+import signal
 import subprocess
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
@@ -17,28 +20,22 @@ def test_cli_shows_help():
 
 
 def test_reload_whitelist_sends_sighup_to_all_running(tmp_path):
-    """reload-whitelist should send SIGHUP to mitmdump in all running containers."""
+    """reload-whitelist should send SIGHUP to host proxy PID for all running sessions."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
     logs_dir = tmp_path / '.vibedom' / 'logs'
     session_dir = logs_dir / 'session-20260218-120000-000000'
     session_dir.mkdir(parents=True)
-    (session_dir / 'state.json').write_text(_make_running_state(workspace))
+    (session_dir / 'state.json').write_text(_make_running_state(workspace, proxy_pid=99999))
 
     runner = CliRunner()
     with patch('vibedom.cli.Path.home', return_value=tmp_path):
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stderr='')
-
+        with patch('os.kill') as mock_kill:
             result = runner.invoke(main, ['reload-whitelist'])
 
             assert result.exit_code == 0
-            cmd = mock_run.call_args[0][0]
-            assert 'exec' in cmd
-            assert 'pkill' in cmd
-            assert '-HUP' in cmd
-            assert 'mitmdump' in cmd
+            mock_kill.assert_called_once_with(99999, signal.SIGHUP)
 
 
 def test_reload_whitelist_no_running_sessions(tmp_path):
@@ -52,56 +49,40 @@ def test_reload_whitelist_no_running_sessions(tmp_path):
 
 
 def test_reload_whitelist_fails_gracefully(tmp_path):
-    """reload-whitelist should exit 1 if any container fails to reload."""
+    """reload-whitelist should exit 1 if process not found for any session."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
     logs_dir = tmp_path / '.vibedom' / 'logs'
     session_dir = logs_dir / 'session-20260218-120000-000000'
     session_dir.mkdir(parents=True)
-    (session_dir / 'state.json').write_text(_make_running_state(workspace))
+    (session_dir / 'state.json').write_text(_make_running_state(workspace, proxy_pid=99999))
 
     runner = CliRunner()
     with patch('vibedom.cli.Path.home', return_value=tmp_path):
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stderr='Error: No such container')
-
+        with patch('os.kill', side_effect=ProcessLookupError):
             result = runner.invoke(main, ['reload-whitelist'])
 
             assert result.exit_code == 1
-            assert 'Failed to reload' in result.output
+            assert 'not found' in result.output
 
 
-def test_reload_whitelist_uses_apple_runtime(tmp_path):
-    """reload-whitelist should use 'container' command for apple runtime sessions."""
+def test_reload_whitelist_warns_if_no_proxy_pid(tmp_path):
+    """reload-whitelist should warn when session has no proxy PID (older vibedom session)."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
     logs_dir = tmp_path / '.vibedom' / 'logs'
     session_dir = logs_dir / 'session-20260218-120000-000000'
     session_dir.mkdir(parents=True)
-    import json
-    (session_dir / 'state.json').write_text(json.dumps({
-        'session_id': 'myapp-happy-turing',
-        'workspace': str(workspace),
-        'runtime': 'apple',
-        'container_name': 'vibedom-myapp',
-        'status': 'running',
-        'started_at': '2026-02-19T10:00:00',
-        'ended_at': None,
-        'bundle_path': None,
-    }))
+    (session_dir / 'state.json').write_text(_make_running_state(workspace, proxy_pid=None))
 
     runner = CliRunner()
     with patch('vibedom.cli.Path.home', return_value=tmp_path):
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stderr='')
+        result = runner.invoke(main, ['reload-whitelist'])
 
-            result = runner.invoke(main, ['reload-whitelist'])
-
-            assert result.exit_code == 0
-            cmd = mock_run.call_args[0][0]
-            assert cmd[0] == 'container'
+        assert result.exit_code == 1
+        assert 'No proxy PID' in result.output
 
 
 def _make_complete_state(workspace, session_id='myapp-happy-turing', bundle_path=None):
@@ -119,18 +100,20 @@ def _make_complete_state(workspace, session_id='myapp-happy-turing', bundle_path
     })
 
 
-def _make_running_state(workspace, session_id='myapp-happy-turing'):
+def _make_running_state(workspace, session_id='myapp-happy-turing',
+                        proxy_pid=99999, proxy_port=54321, runtime='docker'):
     """Helper to create a running session state dict."""
-    import json
     return json.dumps({
         'session_id': session_id,
         'workspace': str(workspace),
-        'runtime': 'docker',
+        'runtime': runtime,
         'container_name': 'vibedom-myapp',
         'status': 'running',
         'started_at': '2026-02-19T10:00:00',
         'ended_at': None,
         'bundle_path': None,
+        'proxy_port': proxy_port,
+        'proxy_pid': proxy_pid,
     })
 
 
@@ -565,6 +548,7 @@ def test_run_writes_state_json(tmp_path):
                 with patch('vibedom.cli.VMManager') as mock_vm_cls:
                     mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
                     mock_vm = MagicMock()
+                    mock_vm._proxy = None
                     mock_vm_cls.return_value = mock_vm
 
                     runner.invoke(main, ['run', str(workspace)])
@@ -592,7 +576,9 @@ def test_run_shows_session_id(tmp_path):
             with patch('vibedom.cli.review_findings', return_value=True):
                 with patch('vibedom.cli.VMManager') as mock_vm_cls:
                     mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
-                    mock_vm_cls.return_value = MagicMock()
+                    mock_vm = MagicMock()
+                    mock_vm._proxy = None
+                    mock_vm_cls.return_value = mock_vm
 
                     result = runner.invoke(main, ['run', str(workspace)])
 
@@ -697,3 +683,76 @@ def test_rm_prompts_for_confirmation(tmp_path):
     assert result.exit_code == 0
     assert 'Aborted' in result.output
     assert session_dir.exists()  # Not deleted
+
+
+def test_run_reads_vibedom_yml(tmp_path):
+    """vibedom run should pass base_image and network from vibedom.yml to VMManager."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    (workspace / 'vibedom.yml').write_text(
+        'base_image: myapp-php:latest\nnetwork: myapp_net\n'
+    )
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm = MagicMock()
+                    mock_vm._proxy = None
+                    mock_vm_cls.return_value = mock_vm
+
+                    result = runner.invoke(main, ['run', str(workspace)])
+
+    call_kwargs = mock_vm_cls.call_args[1]
+    assert call_kwargs.get('base_image') == 'myapp-php:latest'
+    assert call_kwargs.get('network') == 'myapp_net'
+
+
+def test_run_stores_proxy_info_in_state(tmp_path):
+    """vibedom run should save proxy_port and proxy_pid to state.json."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_proxy = MagicMock()
+                    mock_proxy.port = 54321
+                    mock_proxy.pid = 99999
+                    mock_vm = MagicMock()
+                    mock_vm._proxy = mock_proxy
+                    mock_vm_cls.return_value = mock_vm
+
+                    runner.invoke(main, ['run', str(workspace)])
+
+    session_dirs = list((tmp_path / '.vibedom' / 'logs').glob('session-*'))
+    assert session_dirs
+    state = json.loads((session_dirs[0] / 'state.json').read_text())
+    assert state['proxy_port'] == 54321
+    assert state['proxy_pid'] == 99999
+
+
+def test_reload_whitelist_sends_sighup_via_pid(tmp_path):
+    """reload-whitelist should send SIGHUP to the host proxy PID from session state."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260220-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(
+        _make_running_state(workspace, proxy_pid=99999, proxy_port=54321)
+    )
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('os.kill') as mock_kill:
+            result = runner.invoke(main, ['reload-whitelist'])
+
+    assert result.exit_code == 0
+    mock_kill.assert_called_once_with(99999, signal.SIGHUP)

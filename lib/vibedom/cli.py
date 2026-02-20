@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """vibedom CLI - Secure AI agent sandbox."""
 
+import os
+import signal as signal_module
 import sys
 import subprocess
 import click
@@ -12,6 +14,7 @@ from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
 from vibedom.session import Session, SessionCleanup, SessionRegistry
+from vibedom.project_config import ProjectConfig
 
 
 def _execute_deletions(to_delete: list, skipped: int, force: bool, dry_run: bool) -> None:
@@ -137,10 +140,19 @@ def run(workspace, runtime):
 
         click.echo("🚀 Starting sandbox...")
         config_dir = Path.home() / '.vibedom'
+        project_config = ProjectConfig.load(workspace_path)
         vm = VMManager(workspace_path, config_dir,
                        session_dir=session.session_dir,
-                       runtime=resolved_runtime)
+                       runtime=resolved_runtime,
+                       network=project_config.network if project_config else None,
+                       base_image=project_config.base_image if project_config else None)
         vm.start()
+
+        # Store proxy info so reload-whitelist can send SIGHUP to the host process
+        if vm._proxy:
+            session.state.proxy_port = vm._proxy.port
+            session.state.proxy_pid = vm._proxy.pid
+            session.state.save(session.session_dir)
 
         session.log_event('VM started successfully')
 
@@ -543,7 +555,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"""
 
 @main.command('reload-whitelist')
 def reload_whitelist() -> None:
-    """Reload domain whitelist in all running containers.
+    """Reload domain whitelist for all running sessions.
 
     After editing ~/.vibedom/config/trusted_domains.txt, use this command
     to apply the changes without restarting containers.
@@ -558,15 +570,22 @@ def reload_whitelist() -> None:
 
     failed = 0
     for session in running:
-        runtime_cmd = 'container' if session.state.runtime == 'apple' else 'docker'
-        result = subprocess.run(
-            [runtime_cmd, 'exec', session.state.container_name, 'pkill', '-HUP', 'mitmdump'],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
+        if not session.state.proxy_pid:
+            click.secho(
+                f"⚠️  No proxy PID for {session.display_name} "
+                f"(started with older vibedom?)",
+                fg='yellow'
+            )
+            failed += 1
+            continue
+        try:
+            os.kill(session.state.proxy_pid, signal_module.SIGHUP)
             click.echo(f"✅ Reloaded whitelist for {session.display_name}")
-        else:
-            click.secho(f"❌ Failed to reload {session.display_name}: {result.stderr}", fg='red')
+        except ProcessLookupError:
+            click.secho(
+                f"❌ Proxy process not found for {session.display_name}",
+                fg='red'
+            )
             failed += 1
 
     if failed:
