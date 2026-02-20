@@ -481,4 +481,4 @@ def test_run_shows_session_id(tmp_path):
 
                     result = runner.invoke(main, ['run', str(workspace)])
 
-    assert 'Session ID' in result.output or 'session_id' in result.output.lower() or 'myapp-' in result.output
+    assert 'Session ID:' in result.output

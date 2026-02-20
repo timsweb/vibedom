@@ -12,7 +12,7 @@ from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
-from vibedom.session import Session, SessionCleanup, SessionRegistry
+from vibedom.session import Session, SessionCleanup
 from datetime import datetime, timedelta
 
 
