@@ -1,7 +1,7 @@
 import subprocess
 import shutil
 from pathlib import Path
-from vibedom.session import Session, SessionState
+from vibedom.session import Session
 
 def test_session_creation(tmp_path):
     """Should create session directory with unique ID."""

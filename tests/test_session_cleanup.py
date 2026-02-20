@@ -1,6 +1,5 @@
 """Tests for SessionCleanup filter and delete helpers."""
 import json
-import pytest
 from pathlib import Path
 from datetime import datetime, timedelta
 from vibedom.session import Session, SessionCleanup
