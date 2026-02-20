@@ -28,17 +28,28 @@ class SessionState:
     started_at: str      # ISO 8601 string
     ended_at: Optional[str] = None
     bundle_path: Optional[str] = None
+    proxy_port: Optional[int] = None
+    proxy_pid: Optional[int] = None
 
     @classmethod
-    def create(cls, workspace: Path, runtime: str) -> 'SessionState':
+    def create(
+        cls,
+        workspace: Path,
+        runtime: str,
+        session_id: Optional[str] = None,
+        container_name: Optional[str] = None,
+    ) -> 'SessionState':
         """Create a new SessionState for a fresh session."""
         from vibedom.words import generate_session_id
-        session_id = generate_session_id(workspace.name)
+        if session_id is None:
+            session_id = generate_session_id(workspace.name)
+        if container_name is None:
+            container_name = f'vibedom-{workspace.name}'
         return cls(
             session_id=session_id,
             workspace=str(workspace),
             runtime=runtime,
-            container_name=f'vibedom-{workspace.name}',
+            container_name=container_name,
             status='running',
             started_at=datetime.now().isoformat(timespec='seconds'),
         )

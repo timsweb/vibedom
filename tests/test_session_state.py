@@ -67,3 +67,20 @@ def test_mark_abandoned(tmp_path):
 def test_started_at_dt_is_datetime():
     state = SessionState.create(Path('/Users/test/myapp'), 'docker')
     assert isinstance(state.started_at_dt, datetime)
+
+
+def test_session_state_stores_proxy_fields(tmp_path):
+    """SessionState should persist proxy_port and proxy_pid."""
+    state = SessionState.create(
+        session_id='myapp-happy-turing',
+        workspace=tmp_path / 'myapp',
+        runtime='docker',
+        container_name='vibedom-myapp',
+    )
+    state.proxy_port = 54321
+    state.proxy_pid = 99999
+    state.save(tmp_path)
+
+    loaded = SessionState.load(tmp_path)
+    assert loaded.proxy_port == 54321
+    assert loaded.proxy_pid == 99999
