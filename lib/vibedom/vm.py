@@ -212,16 +212,16 @@ class VMManager:
         try:
             if self.runtime == 'apple':
                 subprocess.run(
-                    ['container', 'stop', self.container_name],
+                    [self.runtime_cmd, 'stop', self.container_name],
                     capture_output=True,
                 )
                 subprocess.run(
-                    ['container', 'delete', '--force', self.container_name],
+                    [self.runtime_cmd, 'delete', '--force', self.container_name],
                     capture_output=True,
                 )
             else:
                 subprocess.run(
-                    ['docker', 'rm', '-f', self.container_name],
+                    [self.runtime_cmd, 'rm', '-f', self.container_name],
                     capture_output=True,
                 )
         except FileNotFoundError:

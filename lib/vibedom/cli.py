@@ -207,6 +207,13 @@ def stop(session_id):
         click.secho(f"❌ Error stopping container: {e}", fg='red')
         sys.exit(1)
 
+    # Stop the host proxy process (not tracked by the fresh VMManager above)
+    if session.state.proxy_pid:
+        try:
+            os.kill(session.state.proxy_pid, signal_module.SIGTERM)
+        except ProcessLookupError:
+            pass  # Already gone
+
     if session.state.status == 'complete' and session.state.bundle_path:
         bundle_path = Path(session.state.bundle_path)
         click.echo("\n✅ Session complete!")

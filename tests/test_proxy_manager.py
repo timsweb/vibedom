@@ -29,7 +29,8 @@ def test_proxy_manager_start_returns_port(tmp_path):
 
     manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
 
-    with patch('subprocess.Popen') as mock_popen:
+    with patch('subprocess.Popen') as mock_popen, \
+         patch('vibedom.proxy._find_free_port', return_value=18765):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None
@@ -38,7 +39,7 @@ def test_proxy_manager_start_returns_port(tmp_path):
         with patch('vibedom.proxy._wait_for_proxy', return_value=True):
             port = manager.start()
 
-    assert isinstance(port, int)
+    assert port == 18765
     assert mock_popen.called
     cmd = mock_popen.call_args[0][0]
     assert 'mitmdump' in cmd[0]
@@ -55,7 +56,8 @@ def test_proxy_manager_stop_terminates_process(tmp_path):
 
     manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
 
-    with patch('subprocess.Popen') as mock_popen:
+    with patch('subprocess.Popen') as mock_popen, \
+         patch('vibedom.proxy._find_free_port', return_value=18765):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None
@@ -78,7 +80,8 @@ def test_proxy_manager_reload_sends_sighup(tmp_path):
 
     manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
 
-    with patch('subprocess.Popen') as mock_popen:
+    with patch('subprocess.Popen') as mock_popen, \
+         patch('vibedom.proxy._find_free_port', return_value=18765):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None
@@ -100,7 +103,8 @@ def test_proxy_manager_passes_paths_as_env(tmp_path):
 
     manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
 
-    with patch('subprocess.Popen') as mock_popen:
+    with patch('subprocess.Popen') as mock_popen, \
+         patch('vibedom.proxy._find_free_port', return_value=18765):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None
