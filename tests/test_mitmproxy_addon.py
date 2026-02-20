@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'vm'))
 
@@ -32,7 +32,7 @@ def test_request_headers_pass_through(mock_mkdir):
 
     proxy = VibedomProxy()
 
-    flow = Mock(spec=http.HTTPFlow)
+    flow = MagicMock()
     flow.request.host = "api.anthropic.com"
     flow.request.host_header = "api.anthropic.com"
     flow.request.content = None
