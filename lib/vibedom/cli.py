@@ -183,8 +183,8 @@ def stop(session_id):
         click.echo("\n✅ Session complete!")
         click.echo(f"📋 Session ID: {session.state.session_id}")
         click.echo(f"📦 Bundle: {bundle_path}")
-        click.echo(f"\n📋 To review: vibedom review {session.state.session_id}")
-        click.echo(f"🔀 To merge:  vibedom merge {session.state.session_id}")
+        click.echo(f"\n📋 To review: vibedom review {session.state.workspace}")
+        click.echo(f"🔀 To merge:  vibedom merge {session.state.workspace}")
     else:
         click.secho("⚠️  Bundle creation failed", fg='yellow')
         click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
