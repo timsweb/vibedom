@@ -2,11 +2,31 @@
 
 ## Installation
 
+[pipx](https://pipx.pypa.io) is recommended — it installs vibedom in an isolated environment and puts the `vibedom` command on your PATH without affecting other Python projects:
+
+```bash
+pipx install git+https://github.com/timsweb/vibedom.git
+```
+
+**Updating:**
+
+```bash
+pipx install --force git+https://github.com/timsweb/vibedom.git
+```
+
+Or if you've already installed via pipx:
+
+```bash
+pipx reinstall vibedom
+```
+
+**Alternative (plain pip):**
+
 ```bash
 pip install git+https://github.com/timsweb/vibedom.git
 ```
 
-Or for development:
+**For development:**
 
 ```bash
 git clone https://github.com/timsweb/vibedom.git

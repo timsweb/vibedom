@@ -20,8 +20,10 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 ## Install
 
 ```bash
-pip install git+https://github.com/timsweb/vibedom.git
+pipx install git+https://github.com/timsweb/vibedom.git
 ```
+
+[pipx](https://pipx.pypa.io) is recommended — it keeps vibedom isolated and puts the command on your PATH. Plain `pip install` also works.
 
 ## Quick Start
 
