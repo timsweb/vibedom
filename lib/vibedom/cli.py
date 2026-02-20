@@ -177,11 +177,7 @@ def stop(session_id):
     logs_dir = Path.home() / '.vibedom' / 'logs'
     registry = SessionRegistry(logs_dir)
 
-    try:
-        session = registry.resolve(session_id, running_only=(session_id is None))
-    except click.ClickException as e:
-        click.secho(f"❌ {e.format_message()}", fg='red')
-        sys.exit(1)
+    session = registry.resolve(session_id, running_only=(session_id is None))
 
     if session.state.status != 'running':
         click.secho(
@@ -195,12 +191,15 @@ def stop(session_id):
     click.echo("Creating git bundle...")
     session.finalize()
 
-    # Stop the container
-    config_dir = Path.home() / '.vibedom'
-    vm = VMManager(Path(session.state.workspace), config_dir,
-                   session_dir=session.session_dir,
-                   runtime=session.state.runtime)
-    vm.stop()
+    try:
+        config_dir = Path.home() / '.vibedom'
+        vm = VMManager(Path(session.state.workspace), config_dir,
+                       session_dir=session.session_dir,
+                       runtime=session.state.runtime)
+        vm.stop()
+    except Exception as e:
+        click.secho(f"❌ Error stopping container: {e}", fg='red')
+        sys.exit(1)
 
     if session.state.status == 'complete' and session.state.bundle_path:
         bundle_path = Path(session.state.bundle_path)
