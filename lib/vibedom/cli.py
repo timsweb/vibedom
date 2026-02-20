@@ -213,6 +213,34 @@ def stop(session_id):
         click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
 
 
+@main.command('list')
+def list_sessions():
+    """List all sessions with their status."""
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    if not logs_dir.exists():
+        click.echo("No sessions found")
+        return
+
+    registry = SessionRegistry(logs_dir)
+    sessions = registry.all()
+
+    if not sessions:
+        click.echo("No sessions found")
+        return
+
+    # Header
+    click.echo(f"{'ID':<40} {'WORKSPACE':<20} {'STATUS':<12} {'STARTED'}")
+    click.echo('-' * 85)
+    for session in sessions:
+        workspace_name = Path(session.state.workspace).name
+        click.echo(
+            f"{session.state.session_id:<40} "
+            f"{workspace_name:<20} "
+            f"{session.state.status:<12} "
+            f"{session.age_str}"
+        )
+
+
 @main.command('shell')
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
