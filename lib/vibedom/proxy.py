@@ -37,6 +37,7 @@ class ProxyManager:
         self.session_dir = session_dir
         self.config_dir = config_dir
         self._process: Optional[subprocess.Popen] = None
+        self._log_file = None
         self.port: Optional[int] = None
 
     @property
@@ -66,6 +67,7 @@ class ProxyManager:
         })
 
         log_path = self.session_dir / 'mitmproxy.log'
+        self._log_file = open(log_path, 'w')
         self._process = subprocess.Popen(
             [
                 mitmdump,
@@ -76,7 +78,7 @@ class ProxyManager:
                 '-s', str(addon_path),
             ],
             env=env,
-            stdout=open(log_path, 'w'),
+            stdout=self._log_file,
             stderr=subprocess.STDOUT,
         )
 
@@ -98,6 +100,9 @@ class ProxyManager:
             except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
+            if self._log_file:
+                self._log_file.close()
+                self._log_file = None
             self.port = None
 
     def reload(self) -> None:

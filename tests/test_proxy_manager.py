@@ -113,3 +113,21 @@ def test_proxy_manager_passes_paths_as_env(tmp_path):
     assert 'VIBEDOM_WHITELIST_PATH' in env
     assert 'VIBEDOM_NETWORK_LOG_PATH' in env
     assert 'VIBEDOM_GITLEAKS_CONFIG' in env
+
+
+def test_ca_cert_path_returns_none_before_start(tmp_path):
+    """ca_cert_path should return None when cert doesn't exist yet."""
+    manager = ProxyManager(session_dir=tmp_path / 'session', config_dir=tmp_path / 'config')
+    assert manager.ca_cert_path is None
+
+
+def test_ca_cert_path_returns_path_when_cert_exists(tmp_path):
+    """ca_cert_path should return path when cert file exists."""
+    config_dir = tmp_path / 'config'
+    mitmproxy_dir = config_dir / 'mitmproxy'
+    mitmproxy_dir.mkdir(parents=True)
+    cert = mitmproxy_dir / 'mitmproxy-ca-cert.pem'
+    cert.write_text('fake cert')
+
+    manager = ProxyManager(session_dir=tmp_path / 'session', config_dir=config_dir)
+    assert manager.ca_cert_path == cert
