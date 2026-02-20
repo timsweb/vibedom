@@ -12,55 +12,32 @@ from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
 from vibedom.session import Session, SessionCleanup, SessionRegistry
-from datetime import datetime
 
 
-def _format_session_info(session: dict) -> str:
-    """Format session information for display.
+def _execute_deletions(to_delete: list, skipped: int, force: bool, dry_run: bool) -> None:
+    """Execute or preview deletions for prune/housekeeping commands.
 
     Args:
-        session: Session dictionary with 'workspace', 'timestamp', 'dir' keys
-
-    Returns:
-        Formatted string: "workspace_name (X days old) - session_dir_name"
+        to_delete: List of Session objects to delete
+        skipped: Count of sessions skipped (still running)
+        force: Delete without prompting if True
+        dry_run: Preview without deleting if True
     """
-    workspace_name = session['workspace'].name if session['workspace'] else 'unknown'
-    age = datetime.now() - session['timestamp']
+    deleted = 0
+    for session in to_delete:
+        name = session.display_name
+        if dry_run:
+            click.echo(f"Would delete: {name}")
+            deleted += 1
+        elif force or click.confirm(f"Delete {name}?", default=True):
+            SessionCleanup._delete_session(session.session_dir)
+            click.echo(f"Deleted {name}")
+            deleted += 1
 
-    if age.days > 0:
-        age_str = f"{age.days} day{'s' if age.days > 1 else ''} old"
-    elif age.seconds >= 3600:
-        hours = age.seconds // 3600
-        age_str = f"{hours} hour{'s' if hours > 1 else ''} old"
-    elif age.seconds >= 60:
-        minutes = age.seconds // 60
-        age_str = f"{minutes} minute{'s' if minutes > 1 else ''} old"
+    if dry_run:
+        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
     else:
-        age_str = f"{age.seconds} second{'s' if age.seconds > 1 else ''} old"
-
-    return f"{workspace_name} ({age_str}) - {session['dir'].name}"
-
-
-def find_latest_session(workspace: Path, logs_dir: Path) -> Optional[Path]:
-    """Find most recent session directory for a workspace.
-
-    Args:
-        workspace: Workspace path to search for
-        logs_dir: Base logs directory (e.g., ~/.vibedom/logs)
-
-    Returns:
-        Path to session directory if found, None otherwise
-    """
-    if not logs_dir.exists():
-        return None
-
-    for session_dir in sorted(logs_dir.glob('session-*'), reverse=True):
-        session_log = session_dir / 'session.log'
-        if session_log.exists():
-            log_content = session_log.read_text()
-            if str(workspace.resolve()) in log_content:
-                return session_dir
-    return None
+        click.echo(f"\nDeleted {deleted} session(s), skipped {skipped} (still running)")
 
 @click.group()
 @click.version_option()
@@ -279,9 +256,7 @@ def attach(session_id):
 @main.command('review')
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--branch', help='Branch to review from bundle (default: current branch)')
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def review(workspace: str, branch: Optional[str], runtime: str) -> None:
+def review(workspace: str, branch: Optional[str]) -> None:
     """Review changes from most recent session."""
     workspace_path = Path(workspace).resolve()
 
@@ -299,31 +274,22 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
         click.secho(f"❌ Error: {workspace_path} is not a git repository", fg='red')
         sys.exit(1)
 
-    # Find latest session
+    # Find latest session via registry
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    session_dir = find_latest_session(workspace_path, logs_dir)
+    registry = SessionRegistry(logs_dir)
+    session_obj = registry.find(workspace_path.name)
 
-    if not session_dir:
+    if not session_obj:
         click.secho(f"❌ No session found for {workspace_path.name}", fg='red')
         click.echo(f"Run 'vibedom run {workspace_path}' first.")
         sys.exit(1)
 
-    # Check if session is still running
-    container_name = f'vibedom-{workspace_path.name}'
-    try:
-        _, runtime_cmd = VMManager._detect_runtime(runtime if runtime != 'auto' else None)
-    except RuntimeError as e:
-        click.secho(f"❌ {e}", fg='red')
-        sys.exit(1)
+    session_dir = session_obj.session_dir
 
-    # Check if container is running
-    result = subprocess.run(
-        [runtime_cmd, 'ps', '-q', '--filter', f'name={container_name}'],
-        capture_output=True, text=True
-    )
-    if result.stdout.strip():
-        click.secho("❌ Session is still running", fg='red')
-        click.echo(f"Stop it first: vibedom stop {workspace_path}")
+    # Check if session is still running
+    if session_obj.is_container_running():
+        click.secho("❌ Session is still running. Stop it first:", fg='red')
+        click.echo(f"  vibedom stop {session_obj.state.session_id}")
         sys.exit(1)
 
     # Check if bundle exists
@@ -345,8 +311,8 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
             click.secho("❌ Error: Could not determine current branch", fg='red')
             sys.exit(1)
 
-    # Generate remote name from session timestamp
-    session_id = session_dir.name.replace('session-', '')
+    # Generate remote name from session ID
+    session_id = session_obj.state.session_id
     remote_name = f'vibedom-{session_id}'
 
     # Check if remote already exists
@@ -418,9 +384,7 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
 @click.option('--branch', help='Branch to merge from bundle (default: current branch)')
 @click.option('--merge', 'keep_history', is_flag=True,
               help='Keep full commit history (default: squash)')
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: str) -> None:
+def merge(workspace: str, branch: Optional[str], keep_history: bool) -> None:
     """Merge changes from most recent session (squash by default)."""
     workspace_path = Path(workspace).resolve()
 
@@ -448,14 +412,17 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
         click.echo("Commit or stash them first, then try again.")
         sys.exit(1)
 
-    # Find latest session
+    # Find latest session via registry
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    session_dir = find_latest_session(workspace_path, logs_dir)
+    registry = SessionRegistry(logs_dir)
+    session_obj = registry.find(workspace_path.name)
 
-    if not session_dir:
+    if not session_obj:
         click.secho(f"❌ No session found for {workspace_path.name}", fg='red')
         click.echo(f"Run 'vibedom run {workspace_path}' first.")
         sys.exit(1)
+
+    session_dir = session_obj.session_dir
 
     # Check if bundle exists
     bundle_path = session_dir / 'repo.bundle'
@@ -476,8 +443,8 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
             click.secho("❌ Error: Could not determine current branch", fg='red')
             sys.exit(1)
 
-    # Generate remote name
-    session_id = session_dir.name.replace('session-', '')
+    # Generate remote name from session ID
+    session_id = session_obj.state.session_id
     remote_name = f'vibedom-{session_id}'
 
     # Check if remote exists (might have been added by review)
@@ -600,12 +567,14 @@ def reload_whitelist(workspace: str, runtime: str) -> None:
 @main.command()
 @click.option('--force', '-f', is_flag=True, help='Delete without prompting')
 @click.option('--dry-run', is_flag=True, help='Preview without deleting')
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def prune(force: bool, dry_run: bool, runtime: str) -> None:
+def prune(force: bool, dry_run: bool) -> None:
     """Remove all session directories without running containers."""
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    sessions = SessionCleanup.find_all_sessions(logs_dir, runtime)
+    if not logs_dir.exists():
+        click.echo("No sessions to delete")
+        return
+    registry = SessionRegistry(logs_dir)
+    sessions = registry.all()
     to_delete = SessionCleanup._filter_not_running(sessions)
     skipped = len(sessions) - len(to_delete)
 
@@ -614,34 +583,21 @@ def prune(force: bool, dry_run: bool, runtime: str) -> None:
         return
 
     click.echo(f"Found {len(to_delete)} session(s) to delete")
-
-    deleted = 0
-    for session in to_delete:
-        session_info = _format_session_info(session)
-        if dry_run:
-            click.echo(f"Would delete: {session_info}")
-            deleted += 1
-        elif force or click.confirm(f"Delete {session_info}?", default=True):
-            SessionCleanup._delete_session(session['dir'])
-            click.echo(f"✓ Deleted {session_info}")
-            deleted += 1
-
-    if dry_run:
-        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
-    else:
-        click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
+    _execute_deletions(to_delete, skipped, force, dry_run)
 
 
 @main.command()
 @click.option('--days', '-d', default=7, help='Delete sessions older than N days')
 @click.option('--force', '-f', is_flag=True, help='Delete without prompting')
 @click.option('--dry-run', is_flag=True, help='Preview without deleting')
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def housekeeping(days: int, force: bool, dry_run: bool, runtime: str) -> None:
-    """Remove sessions older than N days."""
+def housekeeping(days: int, force: bool, dry_run: bool) -> None:
+    """Remove sessions older than N days without running containers."""
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    sessions = SessionCleanup.find_all_sessions(logs_dir, runtime)
+    if not logs_dir.exists():
+        click.echo(f"No sessions older than {days} days")
+        return
+    registry = SessionRegistry(logs_dir)
+    sessions = registry.all()
     old_sessions = SessionCleanup._filter_by_age(sessions, days)
     to_delete = SessionCleanup._filter_not_running(old_sessions)
     skipped = len(old_sessions) - len(to_delete)
@@ -651,22 +607,7 @@ def housekeeping(days: int, force: bool, dry_run: bool, runtime: str) -> None:
         return
 
     click.echo(f"Found {len(to_delete)} session(s) older than {days} days")
-
-    deleted = 0
-    for session in to_delete:
-        session_info = _format_session_info(session)
-        if dry_run:
-            click.echo(f"Would delete: {session_info}")
-            deleted += 1
-        elif force or click.confirm(f"Delete {session_info}?", default=True):
-            SessionCleanup._delete_session(session['dir'])
-            click.echo(f"✓ Deleted {session_info}")
-            deleted += 1
-
-    if dry_run:
-        click.echo(f"\nWould delete {deleted} session(s), skip {skipped} (still running)")
-    else:
-        click.echo(f"\n✅ Deleted {deleted} session(s), skipped {skipped} (still running)")
+    _execute_deletions(to_delete, skipped, force, dry_run)
 
 
 if __name__ == '__main__':
