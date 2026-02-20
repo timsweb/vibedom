@@ -374,6 +374,40 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
             assert 'uncommitted changes' in result.output
 
 
+def test_merge_fails_if_session_running(tmp_path):
+    """merge should fail if the session container is still running."""
+    import json
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260219-100000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(json.dumps({
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'docker',
+        'container_name': 'vibedom-myapp',
+        'status': 'running',
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': None,
+        'bundle_path': None,
+    }))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                MagicMock(returncode=0),        # git rev-parse --git-dir (is git repo)
+                MagicMock(returncode=0, stdout=''),  # git status --porcelain (clean)
+            ]
+            with patch('vibedom.session.Session.is_container_running', return_value=True):
+                result = runner.invoke(main, ['merge', str(workspace)])
+
+    assert result.exit_code == 1
+    assert 'running' in result.output.lower()
+
+
 def test_attach_execs_into_running_session(tmp_path):
     """attach should exec into the running session's container."""
     import json

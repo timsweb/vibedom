@@ -422,6 +422,11 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool) -> None:
         click.echo(f"Run 'vibedom run {workspace_path}' first.")
         sys.exit(1)
 
+    if session_obj.is_container_running():
+        click.secho("❌ Session is still running. Stop it first:", fg='red')
+        click.echo(f"  vibedom stop {session_obj.state.session_id}")
+        sys.exit(1)
+
     session_dir = session_obj.session_dir
 
     # Check if bundle exists
