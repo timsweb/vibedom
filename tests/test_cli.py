@@ -436,3 +436,49 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
 
             assert result.exit_code == 1
             assert 'uncommitted changes' in result.output
+
+
+def test_run_writes_state_json(tmp_path):
+    """vibedom run should write state.json to the session directory."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm = MagicMock()
+                    mock_vm_cls.return_value = mock_vm
+
+                    result = runner.invoke(main, ['run', str(workspace)])
+
+    # Find the session directory
+    session_dirs = list((tmp_path / '.vibedom' / 'logs').glob('session-*'))
+    assert len(session_dirs) == 1, f"Expected 1 session dir, got: {session_dirs}"
+    state_file = session_dirs[0] / 'state.json'
+    assert state_file.exists(), "state.json not written"
+    import json
+    state = json.loads(state_file.read_text())
+    assert state['status'] == 'running'
+    assert state['workspace'] == str(workspace)
+    assert state['runtime'] == 'docker'
+
+
+def test_run_shows_session_id(tmp_path):
+    """vibedom run should display the session ID in output."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm_cls.return_value = MagicMock()
+
+                    result = runner.invoke(main, ['run', str(workspace)])
+
+    assert 'Session ID' in result.output or 'session_id' in result.output.lower() or 'myapp-' in result.output
