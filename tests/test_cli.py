@@ -482,3 +482,35 @@ def test_run_shows_session_id(tmp_path):
                     result = runner.invoke(main, ['run', str(workspace)])
 
     assert 'Session ID:' in result.output
+
+
+def test_stop_uses_session_registry(tmp_path):
+    """stop should find session via SessionRegistry, not log parsing."""
+    import json
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260219-100000-000000'
+    session_dir.mkdir(parents=True)
+    state = {
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'docker',
+        'container_name': 'vibedom-myapp',
+        'status': 'running',
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': None,
+        'bundle_path': None,
+    }
+    (session_dir / 'state.json').write_text(json.dumps(state))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm = MagicMock()
+            mock_vm_cls.return_value = mock_vm
+            with patch('vibedom.session.Session.create_bundle', return_value=None):
+                result = runner.invoke(main, ['stop', 'myapp-happy-turing'])
+
+    assert result.exit_code == 0

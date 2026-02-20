@@ -3,7 +3,6 @@
 
 import sys
 import subprocess
-import tempfile
 import click
 from pathlib import Path
 from typing import Optional
@@ -12,8 +11,8 @@ from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
-from vibedom.session import Session, SessionCleanup
-from datetime import datetime, timedelta
+from vibedom.session import Session, SessionCleanup, SessionRegistry
+from datetime import datetime
 
 
 def _format_session_info(session: dict) -> str:
@@ -101,7 +100,7 @@ def init():
     click.echo("Creating network whitelist...")
     whitelist_path = create_default_whitelist(config_dir)
     click.echo(f"✓ Whitelist created at {whitelist_path}")
-    click.echo(f"  Edit this file to add your internal domains")
+    click.echo("  Edit this file to add your internal domains")
 
     click.echo("\n✅ Initialization complete!")
 
@@ -151,14 +150,14 @@ def run(workspace, runtime):
 
         session.log_event('VM started successfully')
 
-        click.echo(f"\n✅ Sandbox running!")
+        click.echo("\n✅ Sandbox running!")
         click.echo(f"📋 Session ID: {session.state.session_id}")
         click.echo(f"📁 Session: {session.session_dir}")
         click.echo(f"📦 Live repo: {session.session_dir / 'repo'}")
-        click.echo(f"\n💡 To test changes mid-session:")
+        click.echo("\n💡 To test changes mid-session:")
         click.echo(f"  git remote add vibedom-live {session.session_dir / 'repo'}")
-        click.echo(f"  git fetch vibedom-live")
-        click.echo(f"\n🛑 To stop:")
+        click.echo("  git fetch vibedom-live")
+        click.echo("\n🛑 To stop:")
         click.echo(f"  vibedom stop {session.state.session_id}")
 
     except Exception as e:
@@ -168,129 +167,50 @@ def run(workspace, runtime):
         sys.exit(1)
 
 @main.command()
-@click.argument('workspace', type=click.Path(exists=True), required=False)
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def stop(workspace, runtime):
-    """Stop sandbox and create git bundle.
+@click.argument('session_id', required=False)
+def stop(session_id):
+    """Stop a sandbox session and create git bundle.
 
-    If workspace provided, stops that specific sandbox.
-    If no workspace provided, stops all vibedom containers.
+    SESSION_ID is a session ID (e.g. myapp-happy-turing) or workspace name.
+    If omitted, auto-selects the only running session or prompts.
     """
-    if workspace is None:
-        # Stop all vibedom containers
-        try:
-            runtime, runtime_cmd = VMManager._detect_runtime(runtime if runtime != 'auto' else None)
-        except RuntimeError as e:
-            click.secho(f"❌ {e}", fg='red')
-            sys.exit(1)
-
-        try:
-            if runtime == 'apple':
-                result = subprocess.run(
-                    ['container', 'list', '--all', '--format', '{{.Names}}'],
-                    capture_output=True, text=True, check=True,
-                )
-            else:
-                result = subprocess.run(
-                    ['docker', 'ps', '-a', '--filter', 'name=vibedom-',
-                     '--format', '{{.Names}}'],
-                    capture_output=True, text=True, check=True,
-                )
-
-            containers = [
-                name.strip() for name in result.stdout.split('\n')
-                if name.strip() and name.strip().startswith('vibedom-')
-            ]
-
-            if not containers:
-                click.echo("No vibedom containers running")
-                return
-
-            click.echo(f"Stopping {len(containers)} container(s)...")
-            for name in containers:
-                if runtime == 'apple':
-                    subprocess.run(['container', 'stop', name], capture_output=True)
-                    subprocess.run(['container', 'delete', '--force', name],
-                                   capture_output=True)
-                else:
-                    subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
-
-            click.echo(f"✅ Stopped {len(containers)} container(s)")
-
-        except subprocess.CalledProcessError as e:
-            click.secho(f"❌ Error stopping containers: {e}", fg='red')
-            sys.exit(1)
-        return
-
-    # Stop specific workspace
-    workspace_path = Path(workspace).resolve()
-
-    # Find active session
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    session = None
+    registry = SessionRegistry(logs_dir)
 
-    if logs_dir.exists():
-        # Find most recent session for this workspace
-        for session_dir in sorted(logs_dir.glob('session-*'), reverse=True):
-            session_log = session_dir / 'session.log'
-            if session_log.exists():
-                # Check if this session is for our workspace
-                log_content = session_log.read_text()
-                if str(workspace_path) in log_content:
-                    session = Session(workspace_path, logs_dir)
-                    session.session_dir = session_dir
-                    break
-
-    vm = VMManager(workspace_path, Path.home() / '.vibedom', session_dir=session.session_dir if session else None, runtime=runtime if runtime != 'auto' else None)
-
-    if session:
-        # Create bundle before stopping
-        click.echo("Creating git bundle...")
-        bundle_path = session.create_bundle()
-
-        # Finalize session
-        session.finalize()
-
-        # Stop VM
-        vm.stop()
-
-        # Show user how to review
-        if bundle_path:
-            # Get current branch name from workspace
-            try:
-                current_branch = subprocess.run(
-                    ['git', '-C', str(workspace_path), 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    capture_output=True, text=True, check=True
-                ).stdout.strip()
-            except subprocess.CalledProcessError:
-                current_branch = 'main'
-
-            click.echo(f"\n✅ Session complete!")
-            click.echo(f"📦 Bundle: {bundle_path}")
-            click.echo(f"\n📋 To review changes:")
-            click.echo(f"  git remote add vibedom-xyz {bundle_path}")
-            click.echo(f"  git fetch vibedom-xyz")
-            click.echo(f"  git log vibedom-xyz/{current_branch}")
-            click.echo(f"  git diff {current_branch}..vibedom-xyz/{current_branch}")
-            click.echo(f"\n🔀 To merge into your feature branch (keep commits):")
-            click.echo(f"  git merge vibedom-xyz/{current_branch}")
-            click.echo(f"\n🔀 To merge (squash):")
-            click.echo(f"  git merge --squash vibedom-xyz/{current_branch}")
-            click.echo(f"  git commit -m 'Apply changes from vibedom session'")
-            click.echo(f"\n🚀 Push for peer review:")
-            click.echo(f"  git push origin {current_branch}")
-            click.echo(f"\n🧹 Cleanup:")
-            click.echo(f"  git remote remove vibedom-xyz")
-        else:
-            click.secho(f"⚠️  Bundle creation failed", fg='yellow')
-            click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
-            click.echo(f"\nYou can still add it as a remote:")
-            click.echo(f"  git remote add vibedom-live {session.session_dir / 'repo'}")
+    if session_id is None:
+        running = registry.running()
+        try:
+            session = registry.resolve(None, running_only=True, sessions=running)
+        except SystemExit:
+            click.echo("No running sessions")
+            return
     else:
-        # No session found, just stop container
-        vm.stop()
-        click.echo("✅ Container stopped")
+        session = registry.find(session_id)
+        if not session:
+            click.secho(f"❌ No session found for '{session_id}'", fg='red')
+            sys.exit(1)
+
+    # Create bundle + finalize (updates state.json)
+    click.echo("Creating git bundle...")
+    session.finalize()
+
+    # Stop the container
+    config_dir = Path.home() / '.vibedom'
+    vm = VMManager(Path(session.state.workspace), config_dir,
+                   session_dir=session.session_dir,
+                   runtime=session.state.runtime)
+    vm.stop()
+
+    if session.state.status == 'complete' and session.state.bundle_path:
+        bundle_path = Path(session.state.bundle_path)
+        click.echo("\n✅ Session complete!")
+        click.echo(f"📋 Session ID: {session.state.session_id}")
+        click.echo(f"📦 Bundle: {bundle_path}")
+        click.echo(f"\n📋 To review: vibedom review {session.state.session_id}")
+        click.echo(f"🔀 To merge:  vibedom merge {session.state.session_id}")
+    else:
+        click.secho("⚠️  Bundle creation failed", fg='yellow')
+        click.echo(f"📁 Live repo available: {session.session_dir / 'repo'}")
 
 
 @main.command('shell')
@@ -330,7 +250,7 @@ def shell(workspace: str, runtime: str) -> None:
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError:
-        click.secho(f"❌ Container not running", fg='red')
+        click.secho("❌ Container not running", fg='red')
         click.echo(f"Start it with: vibedom run {workspace_path}")
         sys.exit(1)
     except FileNotFoundError:
@@ -384,7 +304,7 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
         capture_output=True, text=True
     )
     if result.stdout.strip():
-        click.secho(f"❌ Session is still running", fg='red')
+        click.secho("❌ Session is still running", fg='red')
         click.echo(f"Stop it first: vibedom stop {workspace_path}")
         sys.exit(1)
 
@@ -404,7 +324,7 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
             )
             branch = result.stdout.strip()
         except subprocess.CalledProcessError:
-            click.secho(f"❌ Error: Could not determine current branch", fg='red')
+            click.secho("❌ Error: Could not determine current branch", fg='red')
             sys.exit(1)
 
     # Generate remote name from session timestamp
@@ -426,7 +346,7 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
                 check=True
             )
         except subprocess.CalledProcessError:
-            click.secho(f"❌ Error: Failed to add git remote", fg='red')
+            click.secho("❌ Error: Failed to add git remote", fg='red')
             sys.exit(1)
     else:
         click.echo(f"Using existing remote: {remote_name}")
@@ -439,7 +359,7 @@ def review(workspace: str, branch: Optional[str], runtime: str) -> None:
             check=True
         )
     except subprocess.CalledProcessError:
-        click.secho(f"❌ Error: Failed to fetch bundle", fg='red')
+        click.secho("❌ Error: Failed to fetch bundle", fg='red')
         sys.exit(1)
 
     # Show session info
@@ -506,7 +426,7 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
         capture_output=True, text=True
     )
     if result.stdout.strip():
-        click.secho(f"❌ Cannot merge: you have uncommitted changes", fg='red')
+        click.secho("❌ Cannot merge: you have uncommitted changes", fg='red')
         click.echo("Commit or stash them first, then try again.")
         sys.exit(1)
 
@@ -535,7 +455,7 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
             )
             branch = result.stdout.strip()
         except subprocess.CalledProcessError:
-            click.secho(f"❌ Error: Could not determine current branch", fg='red')
+            click.secho("❌ Error: Could not determine current branch", fg='red')
             sys.exit(1)
 
     # Generate remote name
@@ -557,7 +477,7 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
                 check=True
             )
         except subprocess.CalledProcessError:
-            click.secho(f"❌ Error: Failed to add git remote", fg='red')
+            click.secho("❌ Error: Failed to add git remote", fg='red')
             sys.exit(1)
 
         # Fetch bundle
@@ -568,7 +488,7 @@ def merge(workspace: str, branch: Optional[str], keep_history: bool, runtime: st
                 check=True
             )
         except subprocess.CalledProcessError:
-            click.secho(f"❌ Error: Failed to fetch bundle", fg='red')
+            click.secho("❌ Error: Failed to fetch bundle", fg='red')
             sys.exit(1)
     else:
         click.echo(f"Using existing remote: {remote_name}")
@@ -606,7 +526,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"""
                 check=True
             )
     except subprocess.CalledProcessError:
-        click.secho(f"❌ Merge failed", fg='red')
+        click.secho("❌ Merge failed", fg='red')
         click.echo("Resolve conflicts manually and commit.")
         # Don't remove remote - user might need it
         sys.exit(1)
@@ -618,7 +538,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"""
         check=True
     )
 
-    click.echo(f"\n✅ Merge complete!")
+    click.echo("\n✅ Merge complete!")
 
 
 @main.command('reload-whitelist')
