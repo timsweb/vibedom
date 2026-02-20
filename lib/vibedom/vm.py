@@ -52,6 +52,35 @@ class VMManager:
             "No container runtime found. Install apple/container (macOS 26+) or Docker."
         )
 
+    @staticmethod
+    def image_exists(runtime_cmd: str) -> bool:
+        """Check whether the vibedom-alpine image has been built."""
+        result = subprocess.run(
+            [runtime_cmd, 'image', 'inspect', 'vibedom-alpine:latest'],
+            capture_output=True
+        )
+        return result.returncode == 0
+
+    @staticmethod
+    def build_image(runtime: Optional[str] = None) -> None:
+        """Build the vibedom-alpine container image.
+
+        Args:
+            runtime: Container runtime ('docker' or 'apple'), or None for auto-detect
+        """
+        _, runtime_cmd = VMManager._detect_runtime(runtime)
+        vm_dir = Path(__file__).parent.parent.parent / 'vm'
+        dockerfile = vm_dir / 'Dockerfile.alpine'
+
+        if not dockerfile.exists():
+            raise RuntimeError(f"Dockerfile not found at {dockerfile}")
+
+        subprocess.run(
+            [runtime_cmd, 'build', '-t', 'vibedom-alpine:latest',
+             '-f', str(dockerfile), str(vm_dir)],
+            check=True
+        )
+
     def start(self) -> None:
         """Start the VM with workspace mounted."""
         # Stop existing container if any

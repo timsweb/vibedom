@@ -79,6 +79,19 @@ def init():
     click.echo(f"✓ Whitelist created at {whitelist_path}")
     click.echo("  Edit this file to add your internal domains")
 
+    # Build VM image
+    click.echo("\nBuilding VM image (this may take a few minutes on first run)...")
+    try:
+        _, runtime_cmd = VMManager._detect_runtime()
+        if VMManager.image_exists(runtime_cmd):
+            click.echo("✓ VM image already up to date")
+        else:
+            VMManager.build_image()
+            click.echo("✓ VM image built successfully")
+    except RuntimeError as e:
+        click.secho(f"⚠️  Could not build VM image: {e}", fg='yellow')
+        click.echo("  Run './vm/build.sh' manually once a container runtime is installed")
+
     click.echo("\n✅ Initialization complete!")
 
 @main.command()
