@@ -241,45 +241,27 @@ def list_sessions():
         )
 
 
-@main.command('shell')
-@click.argument('workspace', type=click.Path(exists=True))
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'], case_sensitive=False),
-              default='auto', help='Container runtime (auto-detect, docker, or apple)')
-def shell(workspace: str, runtime: str) -> None:
-    """Open shell in container's working directory (/work/repo)."""
-    workspace_path = Path(workspace).resolve()
+@main.command('attach')
+@click.argument('session_id', required=False)
+def attach(session_id):
+    """Open a shell in a running session's workspace (/work/repo).
 
-    if not workspace_path.is_dir():
-        click.secho(f"❌ Error: {workspace_path} is not a directory", fg='red')
-        sys.exit(1)
+    SESSION_ID is a session ID or workspace name.
+    If omitted, auto-selects the only running session or prompts.
+    """
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    running = registry.running()
 
-    # Detect runtime
-    try:
-        _, runtime_cmd = VMManager._detect_runtime(
-            runtime if runtime != 'auto' else None
-        )
-    except RuntimeError as e:
-        click.secho(f"❌ {e}", fg='red')
-        sys.exit(1)
+    session = registry.resolve(session_id, running_only=True, sessions=running)
 
-    # Build container name
-    container_name = f'vibedom-{workspace_path.name}'
-
-    # Build exec command
-    cmd = [
-        runtime_cmd, 'exec',
-        '-it',
-        '-w', '/work/repo',
-        container_name,
-        'bash'
-    ]
-
-    # Execute (give user interactive shell)
+    runtime_cmd = 'container' if session.state.runtime == 'apple' else 'docker'
+    cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
+           session.state.container_name, 'bash']
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError:
-        click.secho("❌ Container not running", fg='red')
-        click.echo(f"Start it with: vibedom run {workspace_path}")
+        click.secho("❌ Failed to attach to container", fg='red')
         sys.exit(1)
     except FileNotFoundError:
         click.secho(f"❌ Error: {runtime_cmd} command not found", fg='red')

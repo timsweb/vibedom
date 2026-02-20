@@ -1,5 +1,4 @@
 import subprocess
-import pytest
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 from vibedom.cli import main
@@ -91,56 +90,6 @@ def test_find_latest_session_not_found(tmp_path):
 
     result = find_latest_session(workspace, logs_dir)
     assert result is None
-
-
-def test_shell_command_docker(tmp_path):
-    """shell command should exec into docker container."""
-    workspace = tmp_path / 'myapp'
-    workspace.mkdir()
-
-    runner = CliRunner()
-
-    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-
-            result = runner.invoke(main, ['shell', str(workspace)])
-
-            # Verify exec command called
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args[0][0]
-            assert call_args[0] == 'docker'
-            assert 'exec' in call_args
-            assert '-it' in call_args
-            assert '-w' in call_args
-            assert '/work/repo' in call_args
-            assert f'vibedom-{workspace.name}' in call_args
-            assert 'bash' in call_args
-
-
-def test_shell_command_apple_container(tmp_path):
-    """shell command should exec into apple/container."""
-    workspace = tmp_path / 'myapp'
-    workspace.mkdir()
-
-    runner = CliRunner()
-
-    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('apple', 'container')):
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-
-            result = runner.invoke(main, ['shell', str(workspace)])
-
-            # Verify exec command called
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args[0][0]
-            assert call_args[0] == 'container'
-            assert 'exec' in call_args
-            assert '-it' in call_args
-            assert '-w' in call_args
-            assert '/work/repo' in call_args
-            assert f'vibedom-{workspace.name}' in call_args
-            assert 'bash' in call_args
 
 
 def test_review_command_success(tmp_path):
@@ -438,6 +387,69 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
             assert 'uncommitted changes' in result.output
 
 
+def test_attach_execs_into_running_session(tmp_path):
+    """attach should exec into the running session's container."""
+    import json
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260219-100000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(json.dumps({
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'docker',
+        'container_name': 'vibedom-myapp',
+        'status': 'running',
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': None,
+        'bundle_path': None,
+    }))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(main, ['attach', 'myapp-happy-turing'])
+
+    assert result.exit_code == 0
+    cmd = mock_run.call_args[0][0]
+    assert 'exec' in cmd
+    assert '-it' in cmd
+    assert '/work/repo' in cmd
+    assert 'vibedom-myapp' in cmd
+    assert 'bash' in cmd
+
+
+def test_attach_uses_container_cmd_for_apple(tmp_path):
+    """attach should use 'container' command for apple runtime."""
+    import json
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260219-100000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(json.dumps({
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'apple',
+        'container_name': 'vibedom-myapp',
+        'status': 'running',
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': None,
+        'bundle_path': None,
+    }))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            runner.invoke(main, ['attach', 'myapp-happy-turing'])
+
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == 'container'
+
+
 def test_run_writes_state_json(tmp_path):
     """vibedom run should write state.json to the session directory."""
     workspace = tmp_path / 'myapp'
@@ -452,7 +464,7 @@ def test_run_writes_state_json(tmp_path):
                     mock_vm = MagicMock()
                     mock_vm_cls.return_value = mock_vm
 
-                    result = runner.invoke(main, ['run', str(workspace)])
+                    runner.invoke(main, ['run', str(workspace)])
 
     # Find the session directory
     session_dirs = list((tmp_path / '.vibedom' / 'logs').glob('session-*'))
