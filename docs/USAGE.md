@@ -1,460 +1,283 @@
 # Usage Guide
 
+## Installation
+
+```bash
+pip install git+ssh://git@your-gitlab.com/yourorg/vibedom.git
+```
+
+Or for development:
+
+```bash
+git clone git@your-gitlab.com:yourorg/vibedom.git
+cd vibedom
+pip install -e .
+```
+
 ## First-Time Setup
 
-1. Set up virtual environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+Run once per machine:
 
-2. Install vibedom:
-   ```bash
-   pip install -e .
-   ```
+```bash
+vibedom init
+```
 
-3. Initialize:
-   ```bash
-   vibedom init
-   ```
+This will:
+1. Generate an SSH deploy key at `~/.vibedom/keys/id_ed25519_vibedom`
+2. Create a default network whitelist at `~/.vibedom/config/trusted_domains.txt`
+3. Build the container image (requires Docker or apple/container)
 
-4. Add the displayed SSH public key to your GitLab account:
-   - GitLab → Settings → SSH Keys
-   - Paste the key shown by `vibedom init`
-_Note: this is a usecase specific step to install packages hosted in a privately hosted gitlab repo_
-
-5. Edit `~/.vibedom/trusted_domains.txt` to add your internal domains
+Add the displayed public key to your GitLab account under **Settings → SSH Keys**. This lets the agent clone your private repositories.
 
 ## Container Runtime
-
-** NOTE: ** until [this issue](https://github.com/apple/container/pull/1042/commits) is resolved apple contains fail to build.
 
 Vibedom auto-detects your container runtime:
 
 - **apple/container** (preferred) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container).
-- **Docker** (fallback) — namespace-based containers. Works on any platform.
+- **Docker** (fallback) — namespace-based containers.
 
 Before first use with apple/container, start the system service:
+
 ```bash
 container system start
 ```
 
-## Running a Sandbox
+> **Note:** Until [this issue](https://github.com/apple/container/pull/1042/commits) is resolved, apple/container builds may fail. Use Docker as a fallback.
+
+## Running a Session
 
 ```bash
 vibedom run ~/projects/myapp
 ```
 
 This will:
-1. Scan workspace for secrets (Gitleaks)
-2. Show findings for review
-3. Start VM with workspace mounted as read-only
-4. Clone/create git repository in isolated session
-5. Launch mitmproxy
+1. Scan the workspace for secrets (Gitleaks) and show findings for review
+2. Start the container with the workspace mounted read-only
+3. Clone your git repository into an isolated session
+4. Start mitmproxy for network control
 
-The sandbox is now running.
+On startup, vibedom prints a **session ID** (e.g. `myapp-happy-turing`) — use this to refer to the session in subsequent commands.
 
-## Using Claude Code
+## Working in the Session
 
-Claude Code CLI is pre-installed in the container image and your settings/authentication persist across sessions via a shared Docker volume.
+### Attaching a Shell
 
-**First time setup (per container runtime):**
+```bash
+vibedom attach
+# Auto-selects if only one session running
 
-1. Exec into the container:
-   ```bash
-   docker exec -it vibedom-myapp sh
-   # or with apple/container:
-   container exec -it vibedom-myapp sh
-   ```
+vibedom attach myapp-happy-turing
+# Specific session by ID or workspace name
+```
 
-2. Authenticate Claude:
-   ```bash
-   cd /work/repo
-   claude
-   ```
+This opens a shell at `/work/repo` inside the container, where Claude Code is pre-installed and authenticated.
 
-3. Follow the OAuth flow to authenticate. Your authentication and settings will persist across all vibedom containers.
+### Using Claude Code
+
+Claude Code is pre-installed in the container image. Authentication persists across sessions via a shared volume.
+
+**First time:**
+```bash
+vibedom attach
+cd /work/repo
+claude   # follow OAuth flow
+```
 
 **Subsequent sessions:**
-
-Claude will already be authenticated - just exec in and run:
 ```bash
-docker exec -it vibedom-myapp sh -c "cd /work/repo && claude"
-# or
-container exec -it vibedom-myapp sh -c "cd /work/repo && claude"
+vibedom attach   # Claude is already authenticated
 ```
 
-**Note:** The first Claude Code installation generates OAuth credentials that persist in the `vibedom-claude-config` Docker volume, shared across all workspaces.
-
-## Other Operations
-
-You can also:
-
-- Inspect the git repository:
-  ```bash
-  docker exec -it vibedom-myapp sh -c "cd /work/repo && git log --oneline"
-  ```
-
-- Monitor network requests:
-  ```bash
-  tail -f ~/.vibedom/logs/session-*/network.jsonl
-  ```
-
-## Working with Git Bundles
-
-### Starting a Session
-
-When you start a vibedom session, the container clones your workspace repository and checks out your current branch:
+### Monitoring Network Activity
 
 ```bash
-# On your feature branch
-git checkout feature/add-authentication
-vibedom run ~/projects/myapp
+tail -f ~/.vibedom/logs/session-*/network.jsonl
 ```
 
-The agent will work on the same branch (`feature/add-authentication`) inside an isolated git repository.
-
-### Testing Changes Mid-Session
-
-You can fetch from the live repository to test changes while the session is still running:
+## Stopping a Session
 
 ```bash
-# Add live repo as remote (once per session)
-git remote add vibedom-live ~/.vibedom/sessions/session-20260214-123456/repo
+vibedom stop
+# Auto-selects if only one session running
 
-# Fetch latest commits anytime
-git fetch vibedom-live
-
-# Create test branch
-git checkout -b test-changes vibedom-live/feature/add-authentication
-
-# Test the changes
-npm test
-npm run dev
-
-# Session continues...
+vibedom stop myapp-happy-turing
+# Specific session
 ```
 
-### Reviewing and Merging Changes
+This creates a git bundle from the session repository, then stops and removes the container. After stopping, the output shows commands to review and merge the agent's changes.
 
-After stopping the session, a git bundle is created:
+## Reviewing and Merging Changes
+
+### Review
 
 ```bash
-vibedom stop ~/projects/myapp
-# Creates bundle at ~/.vibedom/sessions/session-xyz/repo.bundle
+vibedom review myapp-happy-turing
 ```
 
-**Add bundle as remote and review:**
+Shows the commit log and diff between your current branch and what the agent produced. Prints the remote name added for further manual git operations.
+
+### Merge
 
 ```bash
-git remote add vibedom-xyz ~/.vibedom/sessions/session-xyz/repo.bundle
-git fetch vibedom-xyz
+# Squash into a single commit (default)
+vibedom merge myapp-happy-turing
 
-# Review commits
-git log vibedom-xyz/feature/add-authentication
-git log --oneline vibedom-xyz/feature/add-authentication ^feature/add-authentication
+# Keep full commit history
+vibedom merge myapp-happy-turing --merge
 
-# Review changes
-git diff feature/add-authentication..vibedom-xyz/feature/add-authentication
+# Merge a specific branch from the bundle
+vibedom merge myapp-happy-turing --branch experimental
 ```
 
-**Merge (keep commit history):**
-
-```bash
-git checkout feature/add-authentication
-git merge vibedom-xyz/feature/add-authentication
-```
-
-**Merge (squash commits):**
-
-```bash
-git checkout feature/add-authentication
-git merge --squash vibedom-xyz/feature/add-authentication
-git commit -m "Implement authentication system
-
-Agent implemented:
-- User login/logout endpoints
-- JWT token generation
-- Password hashing
-"
-```
-
-**Push for peer review:**
+After merging, push your branch for peer review:
 
 ```bash
 git push origin feature/add-authentication
-# Create Merge Request in GitLab
 ```
 
-**Cleanup:**
+### Manual Git Access
+
+If you prefer to work directly with git, the bundle is at:
+
+```
+~/.vibedom/logs/session-<id>/repo.bundle
+```
 
 ```bash
-git remote remove vibedom-xyz
+git remote add vibedom-session ~/.vibedom/logs/session-xyz/repo.bundle
+git fetch vibedom-session
+git log vibedom-session/main
+git diff main..vibedom-session/main
 ```
 
-### Helper Commands
+## Session Management
 
-**Quick review of changes:**
-```bash
-vibedom review ~/projects/myapp
-# Shows commit log and diff from most recent session
-```
-
-**Merge changes into workspace:**
-```bash
-vibedom merge ~/projects/myapp
-# Squash merge (single commit) - default
-
-vibedom merge ~/projects/myapp --merge
-# Keep full commit history
-
-vibedom merge ~/projects/myapp --branch experimental
-# Merge specific branch from bundle
-```
-
-**Shell access to container:**
-```bash
-vibedom shell ~/projects/myapp
-# Opens bash in /work/repo directory
-```
-
-**Full workflow:**
-```bash
-# 1. Start session
-vibedom run ~/projects/myapp
-
-# 2. Work in container
-vibedom shell ~/projects/myapp
-# (make changes, exit shell)
-
-# 3. Stop and create bundle
-vibedom stop ~/projects/myapp
-
-# 4. Review changes
-vibedom review ~/projects/myapp
-
-# 5. Merge into workspace
-vibedom merge ~/projects/myapp
-```
-
-### Session Management
-
-**List sessions:**
+### List Sessions
 
 ```bash
-ls ~/.vibedom/logs/
+vibedom list
 ```
 
-**Clean up old sessions:**
+Shows all sessions with their status, age, and workspace.
+
+### Delete a Session
 
 ```bash
-rm -rf ~/.vibedom/logs/session-20260214-123456
+vibedom rm myapp-happy-turing
+# Prompts for confirmation
+
+vibedom rm myapp-happy-turing --force
+# No prompt
 ```
 
-### Session Cleanup
+Running sessions are refused — stop them first.
 
-Vibedom provides automated session cleanup commands to help manage disk space.
-
-**Prune old sessions:**
-
-Remove all session directories that don't have running containers:
+### Prune All Non-Running Sessions
 
 ```bash
-# Preview what will be deleted
-vibedom prune --dry-run
-
-# Delete all non-running sessions (interactive)
-vibedom prune
-
-# Delete without prompting
-vibedom prune --force
+vibedom prune --dry-run   # preview
+vibedom prune             # interactive
+vibedom prune --force     # no prompts
 ```
 
-**Clean up old sessions by age:**
-
-Remove sessions older than N days:
+### Clean Up by Age
 
 ```bash
-# Delete sessions older than 7 days (default)
-vibedom housekeeping --dry-run
-vibedom housekeeping
-
-# Delete sessions older than 30 days
-vibedom housekeeping --days 30 --dry-run
-vibedom housekeeping --days 30 --force
+vibedom housekeeping --dry-run        # preview sessions older than 7 days
+vibedom housekeeping                  # delete sessions older than 7 days
+vibedom housekeeping --days 30        # older than 30 days
 ```
 
-Both commands skip sessions with running containers to avoid data loss.
-
-### Troubleshooting
-
-**Bundle creation failed:**
-
-If bundle creation fails, the live repo is still available:
-
-```bash
-git remote add vibedom-live ~/.vibedom/sessions/session-xyz/repo
-git fetch vibedom-live
-# Manually create bundle:
-cd ~/.vibedom/sessions/session-xyz/repo
-git bundle create ../repo.bundle --all
-```
-
-**Non-git workspace:**
-
-If your workspace isn't a git repository, vibedom will initialize a fresh repo with an initial snapshot commit.
-
-## Stopping a Sandbox
-
-```bash
-vibedom stop ~/projects/myapp
-```
-
-This will:
-1. Create a git bundle from the session repository
-2. Display instructions for reviewing and merging changes
-3. Stop and remove the container
-4. Finalize session logs
-
-The bundle contains all commits made by the agent and can be reviewed and merged into your workspace.
+Both `prune` and `housekeeping` skip running sessions.
 
 ## Network Whitelisting
 
-The sandbox enforces domain whitelisting for both HTTP and HTTPS traffic.
+All outbound traffic is filtered through mitmproxy. Only domains in the whitelist are allowed.
 
-### Adding Domains
+### Editing the Whitelist
 
-Edit `~/.vibedom/trusted_domains.txt`:
+```bash
+edit ~/.vibedom/config/trusted_domains.txt
+```
+
+One domain per line. Subdomains are included automatically:
 
 ```
 pypi.org
 npmjs.com
 github.com
-gitlab.com
+your-internal-gitlab.com
 ```
 
-### Reloading Whitelist
+### Reloading Without Restart
 
-After editing the whitelist, you can reload it without restarting the container:
+After editing the whitelist, apply changes to all running containers:
 
 ```bash
-vibedom reload-whitelist ~/projects/myapp
+vibedom reload-whitelist
 ```
-
-The command auto-detects your container runtime, or you can specify it explicitly:
-
-```bash
-vibedom reload-whitelist ~/projects/myapp --runtime docker
-vibedom reload-whitelist ~/projects/myapp --runtime apple
-```
-
-This sends a SIGHUP signal to mitmproxy, triggering it to reload the whitelist from `/mnt/config/trusted_domains.txt`.
 
 ### Testing Network Access
 
 ```bash
-# Inside sandbox
-curl https://pypi.org/simple/    # ✅ Whitelisted, succeeds
-curl https://example.com/         # ❌ Not whitelisted, blocked
+# Inside the container (vibedom attach)
+curl https://pypi.org/simple/    # ✅ whitelisted
+curl https://example.com/        # ❌ blocked
 ```
 
 ### How It Works
 
-Vibedom uses mitmproxy in explicit proxy mode with HTTP_PROXY/HTTPS_PROXY environment variables. Most modern tools (curl, pip, npm, git) respect these variables automatically.
-
-**Supported tools:**
-- curl, wget, httpie
-- pip (Python packages)
-- npm, yarn (Node.js packages)
-- git (over HTTPS)
-- cargo (Rust packages)
-- Go tools (go get)
-- Most language HTTP clients (requests, axios, etc.)
-
-**Tools that may need configuration:**
-- Docker client: Set HTTP_PROXY in daemon config
-- Java applications: May need -Dhttp.proxyHost/-Dhttp.proxyPort
-- Custom binaries: Check tool documentation for proxy support
+Vibedom sets `HTTP_PROXY`/`HTTPS_PROXY` environment variables in the container. Most modern tools respect these automatically: curl, pip, npm, yarn, git, cargo, go.
 
 ## Data Loss Prevention (DLP)
 
-Vibedom scrubs secrets from outbound HTTP traffic to prevent prompt injection attacks from exfiltrating workspace secrets.
+Vibedom scrubs secrets from outbound HTTP requests in real time, preventing agents from exfiltrating workspace secrets (API keys, tokens, etc. found in `.env` files or config).
 
-**Protected Against:**
-- Agent reading secrets from `.env`, config files, etc. and POSTing them to external endpoints
-- Agent exfiltrating secrets via URL query parameters (e.g., `?api_key=xxx`)
-
-**Not Affected:**
-- Legitimate API calls (Authorization headers pass through)
-- API responses (not a threat vector for our model)
-
-**Logging:**
-All scrubbing events are logged to `~/.vibedom/logs/session-*/network.jsonl` with pattern ID and original value (truncated).
+All scrubbing events are logged to `~/.vibedom/logs/session-*/network.jsonl`.
 
 ## Troubleshooting
 
-### "Domain not whitelisted"
+### Container won't start
 
-Add the domain to `~/.vibedom/trusted_domains.txt`:
-
-```bash
-echo "new-domain.com" >> ~/.vibedom/trusted_domains.txt
-```
-
-Then reload the whitelist:
+Check runtime status:
 
 ```bash
-vibedom reload-whitelist ~/projects/myapp
-```
-
-### "Gitleaks found secrets"
-
-Review the findings:
-- **LOW_RISK** (local dev): Safe to continue
-- **MEDIUM_RISK**: Will be scrubbed by DLP (Phase 2)
-- **HIGH_RISK**: Fix before continuing
-
-### VM won't start
-
-Check Docker:
-```bash
+# Docker
 docker ps -a | grep vibedom
-docker logs vibedom-<name>
+docker logs vibedom-myapp
+
+# apple/container
+container list
+container logs vibedom-myapp
 ```
 
-Rebuild VM image:
+Rebuild the image:
+
 ```bash
 vibedom init  # builds image on first run
 ```
 
-### Git repository not initialized
+### "Domain not whitelisted"
 
-If the container fails to initialize the git repository, check:
-1. Is the workspace a git repository?
-2. Is the `.git` directory accessible?
-3. Check container logs for specific errors
+Add the domain and reload:
 
 ```bash
-docker logs vibedom-<name>
+echo "new-domain.com" >> ~/.vibedom/config/trusted_domains.txt
+vibedom reload-whitelist
 ```
 
-## Advanced
+### "Gitleaks found secrets"
 
-### Attach to running VM
+Review each finding:
+- **LOW_RISK**: Safe to continue (e.g. local dev placeholders)
+- **MEDIUM_RISK**: Will be scrubbed by DLP at runtime
+- **HIGH_RISK**: Fix before continuing
 
-```bash
-docker exec -it vibedom-<workspace-name> sh
-```
+### Bundle creation failed
 
-### Inspect logs
-
-```bash
-ls ~/.vibedom/logs/session-*/
-cat ~/.vibedom/logs/session-*/session.log
-```
-
-### Clean up old sessions
+The live repo is still accessible at `~/.vibedom/logs/session-xyz/repo`. You can create the bundle manually:
 
 ```bash
-rm -rf ~/.vibedom/logs/session-*
+cd ~/.vibedom/logs/session-xyz/repo
+git bundle create ../repo.bundle --all
 ```

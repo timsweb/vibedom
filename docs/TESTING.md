@@ -311,7 +311,7 @@ cat ~/.vibedom/logs/session-*/network.jsonl
 cat ~/.vibedom/logs/session-*/session.log
 
 # Stop sandbox
-vibedom stop ~/projects/test-workspace
+vibedom stop
 ```
 
 ## Test Development Guidelines

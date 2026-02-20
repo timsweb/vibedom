@@ -49,7 +49,7 @@ vibedom init
 vibedom run ~/projects/myapp
 
 # Stop sandbox
-vibedom stop ~/projects/myapp
+vibedom stop
 ```
 
 ## How It Works
@@ -64,7 +64,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full architecture details.
 
 ## Configuration
 
-Edit `~/.vibedom/trusted_domains.txt` to add your internal domains:
+Edit `~/.vibedom/config/trusted_domains.txt` to add your internal domains:
 
 ```
 # Add your internal services
