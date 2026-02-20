@@ -214,7 +214,7 @@ if not self.session_dir.exists():
 
 **Issue:** `log_request()` in mitmproxy addon opens file without error handling. Could crash proxy on disk full or permission errors.
 
-**Location:** `vm/mitmproxy_addon.py` lines 63-73
+**Location:** `lib/vibedom/container/mitmproxy_addon.py` lines 63-73
 
 **Current Behavior:**
 ```python
@@ -246,7 +246,7 @@ def log_request(self, flow: http.HTTPFlow, allowed: bool) -> None:
 
 **Issue:** Opening and closing file for every request is inefficient under high traffic.
 
-**Location:** `vm/mitmproxy_addon.py` lines 63-73
+**Location:** `lib/vibedom/container/mitmproxy_addon.py` lines 63-73
 
 **Current Behavior:** File opened/closed for each request
 
@@ -264,7 +264,7 @@ def log_request(self, flow: http.HTTPFlow, allowed: bool) -> None:
 
 **Issue:** When whitelist file doesn't exist, addon silently returns empty set and blocks ALL traffic. No warning logged.
 
-**Location:** `vm/mitmproxy_addon.py` lines 16-20
+**Location:** `lib/vibedom/container/mitmproxy_addon.py` lines 16-20
 
 **Recommendation:**
 ```python
@@ -285,7 +285,7 @@ if not whitelist_path.exists():
 
 **Issue:** Network log entries lack timestamps, making debugging harder.
 
-**Location:** `vm/mitmproxy_addon.py` lines 65-70
+**Location:** `lib/vibedom/container/mitmproxy_addon.py` lines 65-70
 
 **Recommendation:**
 ```python

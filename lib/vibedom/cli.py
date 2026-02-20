@@ -90,7 +90,7 @@ def init():
             click.echo("✓ VM image built successfully")
     except RuntimeError as e:
         click.secho(f"⚠️  Could not build VM image: {e}", fg='yellow')
-        click.echo("  Run './vm/build.sh' manually once a container runtime is installed")
+        click.echo("  Run 'vibedom build' manually once a container runtime is installed")
 
     click.echo("\n✅ Initialization complete!")
 

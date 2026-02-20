@@ -277,7 +277,7 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 
 ```bash
 # Build VM image first
-./vm/build.sh
+vibedom init  # builds image on first run
 
 # Run integration tests
 pytest tests/test_integration.py -v
@@ -288,7 +288,7 @@ pytest tests/test_vm.py -v
 
 ```bash
 # Build image (auto-detects runtime)
-./vm/build.sh
+vibedom init  # builds image on first run
 
 # Test basic workflow
 vibedom run ~/projects/test-workspace

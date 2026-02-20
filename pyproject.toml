@@ -28,5 +28,5 @@ vibedom = ["container/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["lib", "vm"]
+pythonpath = ["lib", "lib/vibedom/container"]
 python_files = "test_*.py"

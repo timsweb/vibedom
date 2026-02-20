@@ -19,7 +19,7 @@
     - Claude Code CLI pre-installed with persistent config volume
     - Health check polling for VM readiness
 
-2. **Network Control** (`vm/mitmproxy_addon.py`, `vm/startup.sh`)
+2. **Network Control** (`lib/vibedom/container/mitmproxy_addon.py`, `lib/vibedom/container/startup.sh`)
    - mitmproxy in explicit proxy mode (HTTP_PROXY/HTTPS_PROXY environment variables)
    - Domain whitelist enforcement with subdomain support
    - Whitelist reload via SIGHUP (no container restart required)
@@ -57,7 +57,7 @@
 **Container Initialization**: Clone workspace or init fresh repo
 - Git workspaces: Clone from host `.git`, checkout current branch
 - Non-git workspaces: Initialize fresh repo with snapshot commit
-- Implementation: Git clone/init in `vm/startup.sh`
+- Implementation: Git clone/init in `lib/vibedom/container/startup.sh`
 
 **Explicit Proxy**: HTTP_PROXY/HTTPS_PROXY environment variables
 - Rationale: Works with both HTTP and HTTPS
@@ -195,7 +195,7 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 
 ```bash
 # Build VM image
-./vm/build.sh
+vibedom init  # builds image on first run
 
 # Test basic workflow
 vibedom run ~/projects/test-workspace
@@ -226,12 +226,8 @@ vibedom/
 │   ├── review_ui.py     # Interactive review
 │   ├── ssh_keys.py      # Deploy key management
 │   ├── whitelist.py     # Domain whitelist logic
-│   └── config/          # Default configs
-├── vm/                   # VM image and runtime
-│   ├── Dockerfile.alpine # Alpine-based image
-│   ├── startup.sh       # Container entrypoint
-│   ├── mitmproxy_addon.py # Proxy addon
-│   └── build.sh         # Image build script
+│   ├── config/          # Default configs
+│   └── container/       # Container image files (Dockerfile, startup.sh, proxy addon)
 ├── tests/               # Test suite
 ├── docs/                # Documentation
 │   ├── ARCHITECTURE.md  # System architecture
@@ -253,7 +249,7 @@ pip install -e .
 pytest tests/ -v
 
 # Build VM image
-./vm/build.sh
+vibedom init  # builds image on first run
 
 # Check code style
 ruff check lib/ tests/

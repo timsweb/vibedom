@@ -97,7 +97,7 @@ source .venv/bin/activate
 pytest tests/ -v
 
 # Build VM image
-./vm/build.sh
+vibedom init  # builds image on first run
 
 # Integration test
 python tests/test_integration.py

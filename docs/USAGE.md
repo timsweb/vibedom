@@ -421,7 +421,7 @@ docker logs vibedom-<name>
 
 Rebuild VM image:
 ```bash
-./vm/build.sh
+vibedom init  # builds image on first run
 ```
 
 ### Git repository not initialized
