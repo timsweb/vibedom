@@ -46,7 +46,10 @@ def main():
     pass
 
 @main.command()
-def init():
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'],
+              case_sensitive=False), default='auto',
+              help='Container runtime to use for building the image (default: auto-detect)')
+def init(runtime: str):
     """Initialize vibedom (first-time setup)."""
     click.echo("🔧 Initializing vibedom...")
 
@@ -82,11 +85,12 @@ def init():
     # Build VM image
     click.echo("\nBuilding VM image (this may take a few minutes on first run)...")
     try:
-        _, runtime_cmd = VMManager._detect_runtime()
+        rt = None if runtime == 'auto' else runtime
+        _, runtime_cmd = VMManager._detect_runtime(rt)
         if VMManager.image_exists(runtime_cmd):
             click.echo("✓ VM image already up to date")
         else:
-            VMManager.build_image()
+            VMManager.build_image(rt)
             click.echo("✓ VM image built successfully")
     except RuntimeError as e:
         click.secho(f"⚠️  Could not build VM image: {e}", fg='yellow')
