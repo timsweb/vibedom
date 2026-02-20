@@ -134,7 +134,7 @@ class VMManager:
         # Determine image (builds project layer if base_image set)
         image = self._image_name()
 
-        # Ensure mitmproxy conf dir exists for CA cert mount
+        # Ensure mitmproxy conf dir exists so the CA cert will be readable via /mnt/config mount
         conf_dir = self.config_dir / 'mitmproxy'
         conf_dir.mkdir(parents=True, exist_ok=True)
 
@@ -163,7 +163,6 @@ class VMManager:
             # Mounts
             '-v', f'{self.workspace}:/mnt/workspace:ro',
             '-v', f'{self.config_dir}:/mnt/config:ro',
-            '-v', f'{conf_dir}:/mnt/config/mitmproxy:ro',
         ]
 
         if self.session_dir:
