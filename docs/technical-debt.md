@@ -455,6 +455,32 @@ if timestamp is None:
 
 ---
 
+## Host Proxy - Deferred Improvements
+
+**Status:** Deferred
+**Created:** 2026-02-20
+**Priority:** Medium
+
+### 1. `vibedom init` Does Not Rebuild Stale Image (Medium Priority)
+
+**Issue:** `vibedom init` skips the image build if `vibedom-alpine:latest` already exists. After a vibedom upgrade that changes `startup.sh` or the Dockerfile, users must manually rebuild the image or the old startup logic keeps running.
+
+**Current Behavior:**
+```python
+if VMManager.image_exists(runtime_cmd):
+    click.echo("✓ VM image already up to date")
+else:
+    VMManager.build_image(rt)
+```
+
+**Recommendation:** Add a `vibedom build` command (or `vibedom init --force`) that always rebuilds the image. Document in upgrade notes that a rebuild is required after updates.
+
+**Workaround:** `docker rmi vibedom-alpine:latest && vibedom init`
+
+**Estimated Effort:** 30 minutes
+
+---
+
 ## Future Considerations
 
 ### Log Rotation
