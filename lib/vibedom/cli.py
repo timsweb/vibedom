@@ -177,18 +177,19 @@ def stop(session_id):
     logs_dir = Path.home() / '.vibedom' / 'logs'
     registry = SessionRegistry(logs_dir)
 
-    if session_id is None:
-        running = registry.running()
-        try:
-            session = registry.resolve(None, running_only=True, sessions=running)
-        except SystemExit:
-            click.echo("No running sessions")
-            return
-    else:
-        session = registry.find(session_id)
-        if not session:
-            click.secho(f"❌ No session found for '{session_id}'", fg='red')
-            sys.exit(1)
+    try:
+        session = registry.resolve(session_id, running_only=(session_id is None))
+    except click.ClickException as e:
+        click.secho(f"❌ {e.format_message()}", fg='red')
+        sys.exit(1)
+
+    if session.state.status != 'running':
+        click.secho(
+            f"Session '{session.state.session_id}' is not running "
+            f"(status: {session.state.status})",
+            fg='yellow'
+        )
+        sys.exit(1)
 
     # Create bundle + finalize (updates state.json)
     click.echo("Creating git bundle...")
