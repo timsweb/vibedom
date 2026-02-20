@@ -580,3 +580,71 @@ def test_stop_uses_session_registry(tmp_path):
                 result = runner.invoke(main, ['stop', 'myapp-happy-turing'])
 
     assert result.exit_code == 0
+
+
+def test_rm_deletes_complete_session(tmp_path):
+    """rm should delete a complete session directory."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_complete_state(workspace))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        result = runner.invoke(main, ['rm', 'myapp-happy-turing', '--force'])
+
+    assert result.exit_code == 0
+    assert 'Deleted' in result.output
+    assert not session_dir.exists()
+
+
+def test_rm_no_session_found(tmp_path):
+    """rm should error if session not found."""
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        result = runner.invoke(main, ['rm', 'nonexistent-session', '--force'])
+
+    assert result.exit_code == 1
+    assert 'No session found' in result.output
+
+
+def test_rm_refuses_running_session(tmp_path):
+    """rm should refuse to delete a running session."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_running_state(workspace))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.session.Session.is_container_running', return_value=True):
+            result = runner.invoke(main, ['rm', 'myapp-happy-turing', '--force'])
+
+    assert result.exit_code == 1
+    assert 'still running' in result.output
+
+
+def test_rm_prompts_for_confirmation(tmp_path):
+    """rm without --force should prompt before deleting."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_complete_state(workspace))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        # Answer 'n' to the confirmation prompt
+        result = runner.invoke(main, ['rm', 'myapp-happy-turing'], input='n\n')
+
+    assert result.exit_code == 0
+    assert 'Aborted' in result.output
+    assert session_dir.exists()  # Not deleted

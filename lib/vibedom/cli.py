@@ -563,6 +563,36 @@ def reload_whitelist(workspace: str, runtime: str) -> None:
 
 
 @main.command()
+@click.argument('session_id')
+@click.option('--force', '-f', is_flag=True, help='Delete without prompting')
+def rm(session_id: str, force: bool) -> None:
+    """Delete a specific session directory.
+
+    SESSION_ID is a session ID (e.g. myapp-happy-turing) or workspace name.
+    Running sessions are refused unless --force is used.
+    """
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    session_obj = registry.find(session_id)
+
+    if not session_obj:
+        click.secho(f"❌ No session found for '{session_id}'", fg='red')
+        sys.exit(1)
+
+    if session_obj.is_container_running():
+        click.secho("❌ Session is still running. Stop it first:", fg='red')
+        click.echo(f"  vibedom stop {session_obj.state.session_id}")
+        sys.exit(1)
+
+    name = session_obj.display_name
+    if force or click.confirm(f"Delete session '{name}'?", default=False):
+        SessionCleanup._delete_session(session_obj.session_dir)
+        click.echo(f"Deleted {name}")
+    else:
+        click.echo("Aborted")
+
+
+@main.command()
 @click.option('--force', '-f', is_flag=True, help='Delete without prompting')
 @click.option('--dry-run', is_flag=True, help='Preview without deleting')
 def prune(force: bool, dry_run: bool) -> None:
