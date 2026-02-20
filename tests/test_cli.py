@@ -16,43 +16,92 @@ def test_cli_shows_help():
     assert 'run' in result.stdout
 
 
-def test_reload_whitelist_sends_sighup(tmp_path):
-    """reload-whitelist should send SIGHUP to mitmdump in container."""
-    workspace = tmp_path / 'test-workspace'
+def test_reload_whitelist_sends_sighup_to_all_running(tmp_path):
+    """reload-whitelist should send SIGHUP to mitmdump in all running containers."""
+    workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
-    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_running_state(workspace))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr='')
 
-            runner = CliRunner()
-            result = runner.invoke(main, ['reload-whitelist', str(workspace)])
+            result = runner.invoke(main, ['reload-whitelist'])
 
-            # Should call docker exec ... pkill -HUP mitmdump
-            assert mock_run.called
+            assert result.exit_code == 0
             cmd = mock_run.call_args[0][0]
-            assert cmd[0] == 'docker'
             assert 'exec' in cmd
             assert 'pkill' in cmd
             assert '-HUP' in cmd
             assert 'mitmdump' in cmd
-            assert result.exit_code == 0
 
 
-def test_reload_whitelist_fails_if_container_not_running(tmp_path):
-    """reload-whitelist should fail gracefully if container not running."""
-    workspace = tmp_path / 'test-workspace'
+def test_reload_whitelist_no_running_sessions(tmp_path):
+    """reload-whitelist should report nothing to do if no sessions are running."""
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        result = runner.invoke(main, ['reload-whitelist'])
+
+    assert result.exit_code == 0
+    assert 'No running sessions' in result.output
+
+
+def test_reload_whitelist_fails_gracefully(tmp_path):
+    """reload-whitelist should exit 1 if any container fails to reload."""
+    workspace = tmp_path / 'myapp'
     workspace.mkdir()
 
-    with patch('vibedom.cli.VMManager._detect_runtime', return_value=('docker', 'docker')):
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    (session_dir / 'state.json').write_text(_make_running_state(workspace))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr='Error: No such container')
 
-            runner = CliRunner()
-            result = runner.invoke(main, ['reload-whitelist', str(workspace)])
+            result = runner.invoke(main, ['reload-whitelist'])
 
             assert result.exit_code == 1
             assert 'Failed to reload' in result.output
+
+
+def test_reload_whitelist_uses_apple_runtime(tmp_path):
+    """reload-whitelist should use 'container' command for apple runtime sessions."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+
+    logs_dir = tmp_path / '.vibedom' / 'logs'
+    session_dir = logs_dir / 'session-20260218-120000-000000'
+    session_dir.mkdir(parents=True)
+    import json
+    (session_dir / 'state.json').write_text(json.dumps({
+        'session_id': 'myapp-happy-turing',
+        'workspace': str(workspace),
+        'runtime': 'apple',
+        'container_name': 'vibedom-myapp',
+        'status': 'running',
+        'started_at': '2026-02-19T10:00:00',
+        'ended_at': None,
+        'bundle_path': None,
+    }))
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stderr='')
+
+            result = runner.invoke(main, ['reload-whitelist'])
+
+            assert result.exit_code == 0
+            cmd = mock_run.call_args[0][0]
+            assert cmd[0] == 'container'
 
 
 def _make_complete_state(workspace, session_id='myapp-happy-turing', bundle_path=None):

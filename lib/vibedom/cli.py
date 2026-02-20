@@ -538,40 +538,34 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"""
 
 
 @main.command('reload-whitelist')
-@click.argument('workspace', type=click.Path(exists=True))
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple']), default='auto',
-              help='Container runtime to use (auto-detects by default)')
-def reload_whitelist(workspace: str, runtime: str) -> None:
-    """Reload domain whitelist without restarting container.
+def reload_whitelist() -> None:
+    """Reload domain whitelist in all running containers.
 
     After editing ~/.vibedom/config/trusted_domains.txt, use this command
-    to reload the whitelist in the running container.
+    to apply the changes without restarting containers.
     """
-    workspace_path = Path(workspace).resolve()
-    container_name = f'vibedom-{workspace_path.name}'
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    running = registry.running()
 
-    # Determine runtime command
-    if runtime == 'auto':
-        try:
-            detected_runtime, runtime_cmd = VMManager._detect_runtime()
-        except RuntimeError as e:
-            click.secho(f"❌ {e}", fg='red')
-            sys.exit(1)
-    elif runtime == 'docker':
-        runtime_cmd = 'docker'
-    elif runtime == 'apple':
-        runtime_cmd = 'container'
+    if not running:
+        click.echo("No running sessions found")
+        return
 
-    # Send SIGHUP to mitmdump process
-    result = subprocess.run(
-        [runtime_cmd, 'exec', container_name, 'pkill', '-HUP', 'mitmdump'],
-        capture_output=True, text=True
-    )
+    failed = 0
+    for session in running:
+        runtime_cmd = 'container' if session.state.runtime == 'apple' else 'docker'
+        result = subprocess.run(
+            [runtime_cmd, 'exec', session.state.container_name, 'pkill', '-HUP', 'mitmdump'],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            click.echo(f"✅ Reloaded whitelist for {session.display_name}")
+        else:
+            click.secho(f"❌ Failed to reload {session.display_name}: {result.stderr}", fg='red')
+            failed += 1
 
-    if result.returncode == 0:
-        click.echo(f"✅ Reloaded whitelist for {workspace_path.name}")
-    else:
-        click.secho(f"❌ Failed to reload: {result.stderr}", fg='red')
+    if failed:
         sys.exit(1)
 
 
