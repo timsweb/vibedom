@@ -21,10 +21,13 @@
 4. Add the displayed SSH public key to your GitLab account:
    - GitLab → Settings → SSH Keys
    - Paste the key shown by `vibedom init`
+_Note: this is a usecase specific step to install packages hosted in a privately hosted gitlab repo_
 
 5. Edit `~/.vibedom/trusted_domains.txt` to add your internal domains
 
 ## Container Runtime
+
+** NOTE: ** until [this issue](https://github.com/apple/container/pull/1042/commits) is resolved apple contains fail to build.
 
 Vibedom auto-detects your container runtime:
 
