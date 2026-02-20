@@ -3,13 +3,13 @@
 ## Installation
 
 ```bash
-pip install git+ssh://git@your-gitlab.com/yourorg/vibedom.git
+pip install git+https://github.com/timsweb/vibedom.git
 ```
 
 Or for development:
 
 ```bash
-git clone git@your-gitlab.com:yourorg/vibedom.git
+git clone https://github.com/timsweb/vibedom.git
 cd vibedom
 pip install -e .
 ```
