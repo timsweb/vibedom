@@ -15,6 +15,7 @@ from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager
 from vibedom.session import Session, SessionCleanup, SessionRegistry
 from vibedom.project_config import ProjectConfig
+from vibedom.proxy import ProxyManager
 
 
 def _execute_deletions(to_delete: list, skipped: int, force: bool, dry_run: bool) -> None:
@@ -597,6 +598,55 @@ def reload_whitelist() -> None:
 
     if failed:
         sys.exit(1)
+
+
+@main.command('proxy-restart')
+@click.argument('session_id', required=False)
+def proxy_restart(session_id: Optional[str]) -> None:
+    """Restart the host proxy for a running session.
+
+    SESSION_ID is a session ID or workspace name.
+    If omitted, auto-selects the only running session.
+
+    Stops the proxy if it is running, then starts a fresh one on the same
+    port so the container's HTTP_PROXY setting remains valid.
+    """
+    logs_dir = Path.home() / '.vibedom' / 'logs'
+    registry = SessionRegistry(logs_dir)
+    session = registry.resolve(session_id, running_only=True)
+
+    if not session.state.proxy_port:
+        click.secho(
+            "❌ No proxy port recorded for this session "
+            "(started with older vibedom?)",
+            fg='red'
+        )
+        sys.exit(1)
+
+    # Stop existing proxy if still running
+    if session.state.proxy_pid:
+        try:
+            os.kill(session.state.proxy_pid, signal_module.SIGTERM)
+            click.echo(f"Stopped proxy (PID {session.state.proxy_pid})")
+        except ProcessLookupError:
+            click.echo(f"Proxy (PID {session.state.proxy_pid}) was already stopped")
+
+    # Start fresh proxy on the same port
+    config_dir = Path.home() / '.vibedom'
+    proxy = ProxyManager(session_dir=session.session_dir, config_dir=config_dir)
+    try:
+        proxy.start(port=session.state.proxy_port)
+    except RuntimeError as e:
+        click.secho(f"❌ Failed to start proxy: {e}", fg='red')
+        sys.exit(1)
+
+    # Persist new PID
+    session.state.proxy_pid = proxy.pid
+    session.state.save(session.session_dir)
+
+    click.echo(
+        f"✅ Proxy restarted on port {proxy.port} (PID {proxy.pid})"
+    )
 
 
 @main.command()

@@ -44,8 +44,14 @@ class ProxyManager:
     def pid(self) -> Optional[int]:
         return self._process.pid if self._process else None
 
-    def start(self) -> int:
-        """Start mitmdump on the host. Returns the port it's listening on."""
+    def start(self, port: Optional[int] = None) -> int:
+        """Start mitmdump on the host. Returns the port it's listening on.
+
+        Args:
+            port: Port to listen on. If None, an OS-assigned free port is used.
+                  Pass a specific port when restarting so the container's
+                  HTTP_PROXY setting remains valid.
+        """
         mitmdump = shutil.which('mitmdump')
         if not mitmdump:
             raise RuntimeError(
@@ -53,7 +59,7 @@ class ProxyManager:
                 "pipx install --force git+https://github.com/timsweb/vibedom.git"
             )
 
-        self.port = _find_free_port()
+        self.port = port if port is not None else _find_free_port()
 
         addon_path = Path(__file__).parent / 'container' / 'mitmproxy_addon.py'
         conf_dir = self.config_dir / 'mitmproxy'
