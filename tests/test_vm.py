@@ -83,8 +83,17 @@ def test_vm_mounts_session_repo(test_workspace, test_config):
         shutil.rmtree(session.session_dir, ignore_errors=True)
 
 
-def test_detect_runtime_prefers_apple(test_workspace, test_config):
-    """Should prefer apple/container when available."""
+def test_detect_runtime_prefers_docker(test_workspace, test_config):
+    """Should prefer Docker when both runtimes are available."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/' + cmd if cmd in ('docker', 'container') else None
+        vm = VMManager(test_workspace, test_config)
+        assert vm.runtime == 'docker'
+        assert vm.runtime_cmd == 'docker'
+
+
+def test_detect_runtime_falls_back_to_apple(test_workspace, test_config):
+    """Should fall back to apple/container when Docker is not available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
         vm = VMManager(test_workspace, test_config)
@@ -92,8 +101,8 @@ def test_detect_runtime_prefers_apple(test_workspace, test_config):
         assert vm.runtime_cmd == 'container'
 
 
-def test_detect_runtime_falls_back_to_docker(test_workspace, test_config):
-    """Should fall back to Docker when apple/container not available."""
+def test_detect_runtime_uses_docker_when_only_docker(test_workspace, test_config):
+    """Should use Docker when only Docker is available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
         vm = VMManager(test_workspace, test_config)
