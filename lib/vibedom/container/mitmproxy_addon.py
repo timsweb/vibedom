@@ -1,5 +1,6 @@
 """Mitmproxy addon for enforcing whitelist and DLP scrubbing."""
 
+import datetime
 import json
 import os
 import signal
@@ -63,6 +64,10 @@ class VibedomProxy:
             os.environ.get('VIBEDOM_WHITELIST_PATH', '/mnt/config/trusted_domains.txt')
         )
         if not whitelist_path.exists():
+            print(
+                f"WARNING: Whitelist file not found at {whitelist_path}, blocking all traffic",
+                file=sys.stderr
+            )
             return set()
 
         domains = set()
@@ -198,6 +203,7 @@ class VibedomProxy:
                     scrubbed: list | None = None) -> None:
         """Log network request with optional scrubbing details."""
         entry = {
+            'timestamp': datetime.datetime.now(datetime.UTC).isoformat(),
             'method': flow.request.method,
             'url': flow.request.pretty_url,
             'host': flow.request.host_header or flow.request.host,

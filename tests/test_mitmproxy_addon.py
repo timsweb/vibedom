@@ -105,3 +105,45 @@ def test_addon_reads_gitleaks_config_from_env(tmp_path, monkeypatch):
     proxy = VibedomProxy()
     # Just verify it instantiates without error when all env vars are set
     assert proxy.network_log_path == tmp_path / 'network.jsonl'
+
+
+@patch('pathlib.Path.mkdir')
+def test_log_request_includes_timestamp(mock_mkdir, tmp_path, monkeypatch):
+    """log_request should include an ISO timestamp in each network log entry."""
+    log_path = tmp_path / 'network.jsonl'
+    monkeypatch.setenv('VIBEDOM_NETWORK_LOG_PATH', str(log_path))
+    monkeypatch.setenv('VIBEDOM_WHITELIST_PATH', str(tmp_path / 'domains.txt'))
+    monkeypatch.setenv('VIBEDOM_GITLEAKS_CONFIG', str(tmp_path / 'gitleaks.toml'))
+
+    from mitmproxy_addon import VibedomProxy
+    import json as json_mod
+
+    proxy = VibedomProxy()
+
+    flow = MagicMock()
+    flow.request.method = 'GET'
+    flow.request.pretty_url = 'https://api.anthropic.com/v1/messages'
+    flow.request.host_header = 'api.anthropic.com'
+    flow.request.host = 'api.anthropic.com'
+
+    proxy.log_request(flow, allowed=True)
+
+    entry = json_mod.loads(log_path.read_text().strip())
+    assert 'timestamp' in entry
+    assert 'T' in entry['timestamp']  # ISO format contains 'T' separator
+
+
+@patch('pathlib.Path.mkdir')
+def test_missing_whitelist_prints_warning(mock_mkdir, tmp_path, monkeypatch, capsys):
+    """load_whitelist should warn to stderr when whitelist file is missing."""
+    monkeypatch.setenv('VIBEDOM_WHITELIST_PATH', str(tmp_path / 'nonexistent.txt'))
+    monkeypatch.setenv('VIBEDOM_NETWORK_LOG_PATH', str(tmp_path / 'network.jsonl'))
+    monkeypatch.setenv('VIBEDOM_GITLEAKS_CONFIG', str(tmp_path / 'gitleaks.toml'))
+
+    from mitmproxy_addon import VibedomProxy
+    proxy = VibedomProxy()
+
+    assert proxy.whitelist == set()
+    captured = capsys.readouterr()
+    assert 'WARNING' in captured.err
+    assert 'blocking all traffic' in captured.err
