@@ -54,7 +54,7 @@ Add the displayed public key to your GitLab account under **Settings → SSH Key
 Vibedom auto-detects your container runtime:
 
 - **Docker** (default) — install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
-- **apple/container** (experimental) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Known issues with DNS and networking mean it is not recommended for production use. Install from [github.com/apple/container](https://github.com/apple/container).
+- **apple/container** (experimental) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container). Note: the `network:` field in `vibedom.yml` is not supported — see below for the host-port alternative.
 
 To force a specific runtime:
 
@@ -91,6 +91,8 @@ network: wapi_shared_network      # join this docker network (for DB, Redis, etc
 2. Connect the container to `network` (so artisan, rails console, etc. can reach the database)
 
 The read-only workspace mount, git clone to `/work/repo`, and git bundle workflow are unchanged — your original files remain protected.
+
+> **apple/container:** The `network:` field is not supported. Instead, expose your services on the host (e.g. `mysql -h 0.0.0.0`) and connect from the container via `host.docker.internal:3306`. Vibedom will warn and ignore the `network:` setting if you run with `--runtime apple`.
 
 ## Working in the Session
 

@@ -359,6 +359,38 @@ def test_vm_start_with_project_network(tmp_path):
         assert 'wapi_shared' in cmd
 
 
+def test_vm_start_network_ignored_with_apple_runtime(tmp_path):
+    """VMManager.start() should warn and skip --network when runtime is apple."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                   runtime='apple', network='myproject_default')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                import io
+                with patch('vibedom.vm.sys.stderr', new_callable=io.StringIO) as mock_stderr:
+                    try:
+                        vm.start()
+                    except RuntimeError:
+                        pass
+                    warning = mock_stderr.getvalue()
+
+    assert 'network' in warning.lower()
+    assert 'apple' in warning.lower() or 'not supported' in warning.lower()
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    assert run_calls
+    cmd = ' '.join(run_calls[0][0][0])
+    assert '--network' not in cmd
+
+
 def test_vm_stop_stops_proxy(tmp_path):
     """VMManager.stop() should stop the ProxyManager."""
     workspace = tmp_path / 'myapp'

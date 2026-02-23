@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -172,7 +173,14 @@ class VMManager:
             cmd += ['-v', f'{self.session_dir}:/mnt/session']
 
         if self.network:
-            cmd += ['--network', self.network]
+            if self.runtime == 'apple':
+                print(
+                    "Warning: vibedom.yml 'network:' is not supported with apple/container — "
+                    "ignored. Connect to host services via host.docker.internal instead.",
+                    file=sys.stderr,
+                )
+            else:
+                cmd += ['--network', self.network]
 
         # Claude/OpenCode config - shared persistent volume across all workspaces
         cmd += ['-v', 'vibedom-claude-config:/root/.claude']
