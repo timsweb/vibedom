@@ -44,11 +44,12 @@ echo "Git repository initialized at /work/repo"
 
 # Link Claude state file so it persists in volume
 # Claude writes to both /root/.claude.json and /root/.claude/.claude.json
-# Only /root/.claude/ is in the persistent volume, so symlink to persist state
-if [ ! -L /root/.claude.json ]; then
-    ln -sf /root/.claude/.claude.json /root/.claude.json
-    echo "Created symlink for Claude state persistence"
-fi
+# Only /root/.claude/ is in the persistent volume, so symlink to persist state.
+# Always recreate: rm first avoids issues if a prior regular file exists in the image layer,
+# and handles the case where Claude Code atomically replaced the symlink via rename().
+rm -f /root/.claude.json
+ln -s /root/.claude/.claude.json /root/.claude.json
+echo "Created symlink for Claude state persistence: $(ls -la /root/.claude.json)"
 
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
