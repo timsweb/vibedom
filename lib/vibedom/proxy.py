@@ -5,6 +5,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -53,6 +54,11 @@ class ProxyManager:
                   HTTP_PROXY setting remains valid.
         """
         mitmdump = shutil.which('mitmdump')
+        if not mitmdump:
+            # Also check alongside the current Python interpreter (e.g. inside a venv)
+            candidate = Path(sys.executable).parent / 'mitmdump'
+            if candidate.exists():
+                mitmdump = str(candidate)
         if not mitmdump:
             raise RuntimeError(
                 "mitmdump not found. Reinstall vibedom: "
