@@ -281,10 +281,7 @@ def attach(session_id):
     cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
            session.state.container_name, 'bash']
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError:
-        click.secho("❌ Failed to attach to container", fg='red')
-        sys.exit(1)
+        subprocess.run(cmd)
     except FileNotFoundError:
         click.secho(f"❌ Error: {runtime_cmd} command not found", fg='red')
         sys.exit(1)
