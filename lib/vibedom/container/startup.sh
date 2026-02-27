@@ -42,14 +42,17 @@ git config user.email "agent@vibedom.local"
 
 echo "Git repository initialized at /work/repo"
 
-# Link Claude state file so it persists in volume
-# Claude writes to both /root/.claude.json and /root/.claude/.claude.json
-# Only /root/.claude/ is in the persistent volume, so symlink to persist state.
-# Always recreate: rm first avoids issues if a prior regular file exists in the image layer,
-# and handles the case where Claude Code atomically replaced the symlink via rename().
-rm -f /root/.claude.json
-ln -s /root/.claude/.claude.json /root/.claude.json
-echo "Created symlink for Claude state persistence: $(ls -la /root/.claude.json)"
+# Restore Claude config from persistent volume
+# Claude Code writes to /root/.claude.json via atomic rename, which breaks symlinks.
+# Instead of fighting that, we copy the file in on startup and periodically sync it back.
+CLAUDE_CONFIG=/root/.claude.json
+CLAUDE_CONFIG_PERSIST=/root/.claude/.claude.json.persist
+if [ -f "$CLAUDE_CONFIG_PERSIST" ]; then
+    cp "$CLAUDE_CONFIG_PERSIST" "$CLAUDE_CONFIG"
+    echo "Restored Claude config from persistent storage"
+else
+    echo "No previous Claude config found (first run)"
+fi
 
 # Start SSH agent with deploy key
 if [ -f /mnt/config/id_ed25519_vibedom ]; then
@@ -83,5 +86,13 @@ touch /tmp/.vm-ready
 
 echo "VM ready!"
 
-# Keep container running
-tail -f /dev/null
+# Keep container running and periodically persist Claude config
+sync_claude_config() {
+    [ -f "$CLAUDE_CONFIG" ] && cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG_PERSIST" 2>/dev/null
+}
+trap 'sync_claude_config; exit 0' SIGTERM SIGINT
+
+while true; do
+    sync_claude_config
+    sleep 30
+done
