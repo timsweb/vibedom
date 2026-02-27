@@ -1,5 +1,6 @@
 """VM lifecycle management."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,19 @@ class VMManager:
             check=True
         )
 
+    def _apple_host_ip(self) -> str:
+        """Return the host IP as seen from inside an apple/container container.
+
+        apple/container doesn't support --add-host and doesn't inject host.docker.internal,
+        so we resolve the host via the default network gateway.
+        """
+        result = subprocess.run(
+            ['container', 'network', 'inspect', 'default'],
+            capture_output=True, text=True, check=True
+        )
+        networks = json.loads(result.stdout)
+        return networks[0]['status']['ipv4Gateway']
+
     def start(self) -> None:
         """Start the VM with workspace mounted."""
         # Stop existing container if any
@@ -140,7 +154,10 @@ class VMManager:
         conf_dir.mkdir(parents=True, exist_ok=True)
 
         detach_flag = '--detach' if self.runtime == 'apple' else '-d'
-        proxy_url = f'http://host.docker.internal:{proxy_port}'
+        # apple/container doesn't support --add-host and doesn't inject host.docker.internal,
+        # so we use the default network gateway IP to reach the host proxy.
+        proxy_host = self._apple_host_ip() if self.runtime == 'apple' else 'host.docker.internal'
+        proxy_url = f'http://{proxy_host}:{proxy_port}'
         # CA bundle path inside the container (set by update-ca-certificates)
         ca_bundle = '/etc/ssl/certs/ca-certificates.crt'
 
@@ -150,7 +167,7 @@ class VMManager:
             '--name', self.container_name,
         ]
         # Docker on Linux needs --add-host to resolve host.docker.internal;
-        # Apple's container runtime provides it natively and doesn't support the flag.
+        # apple/container doesn't support the flag (we use the gateway IP directly instead).
         if self.runtime != 'apple':
             cmd += ['--add-host', 'host.docker.internal:host-gateway']
         cmd += [
