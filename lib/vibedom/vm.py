@@ -148,7 +148,12 @@ class VMManager:
             self.runtime_cmd, 'run',
             detach_flag,
             '--name', self.container_name,
-            '--add-host', 'host.docker.internal:host-gateway',
+        ]
+        # Docker on Linux needs --add-host to resolve host.docker.internal;
+        # Apple's container runtime provides it natively and doesn't support the flag.
+        if self.runtime != 'apple':
+            cmd += ['--add-host', 'host.docker.internal:host-gateway']
+        cmd += [
             # Proxy environment variables
             '-e', f'HTTP_PROXY={proxy_url}',
             '-e', f'HTTPS_PROXY={proxy_url}',
