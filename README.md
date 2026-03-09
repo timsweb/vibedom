@@ -70,7 +70,8 @@ See [docs/USAGE.md](docs/USAGE.md) for the full usage guide.
 git clone https://github.com/timsweb/vibedom.git
 cd vibedom
 uv sync
-uv run pytest tests/ -v
+uv run pytest tests/ -v                  # unit tests (no container needed)
+uv run pytest -m integration             # integration tests (requires Docker or apple/container)
 ```
 
 ## License
