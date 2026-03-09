@@ -2,28 +2,23 @@
 
 ## Installation
 
-[pipx](https://pipx.pypa.io) is recommended — it installs vibedom in an isolated environment and puts the `vibedom` command on your PATH without affecting other Python projects:
+[uv](https://docs.astral.sh/uv/) is recommended — it installs vibedom in an isolated environment and puts the `vibedom` command on your PATH without affecting other Python projects:
 
 ```bash
-pipx install git+https://github.com/timsweb/vibedom.git
+uv tool install git+https://github.com/timsweb/vibedom.git
 ```
 
 **Updating:**
 
 ```bash
-pipx install --force git+https://github.com/timsweb/vibedom.git
+uv tool upgrade vibedom
 ```
 
-Or if you've already installed via pipx:
+**Alternative (pipx):**
 
 ```bash
-pipx reinstall vibedom
-```
-
-**Alternative (plain pip):**
-
-```bash
-pip install git+https://github.com/timsweb/vibedom.git
+pipx install git+https://github.com/timsweb/vibedom.git
+pipx upgrade vibedom  # to update
 ```
 
 **For development:**
@@ -31,7 +26,8 @@ pip install git+https://github.com/timsweb/vibedom.git
 ```bash
 git clone https://github.com/timsweb/vibedom.git
 cd vibedom
-pip install -e .
+uv sync
+uv run pytest tests/ -v
 ```
 
 ## First-Time Setup

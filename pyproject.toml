@@ -13,13 +13,13 @@ dependencies = [
     "mitmproxy>=11.0",
 ]
 
-[project.optional-dependencies]
+[project.scripts]
+vibedom = "vibedom.cli:main"
+
+[dependency-groups]
 dev = [
     "pytest>=7.0.0",
 ]
-
-[project.scripts]
-vibedom = "vibedom.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["lib"]

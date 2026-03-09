@@ -62,7 +62,8 @@ class ProxyManager:
         if not mitmdump:
             raise RuntimeError(
                 "mitmdump not found. Reinstall vibedom: "
-                "pipx install --force git+https://github.com/timsweb/vibedom.git"
+                "uv tool install git+https://github.com/timsweb/vibedom.git  "
+                "(or: pipx install --force git+https://github.com/timsweb/vibedom.git)"
             )
 
         self.port = port if port is not None else _find_free_port()

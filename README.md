@@ -20,10 +20,10 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 ## Install
 
 ```bash
-pipx install git+https://github.com/timsweb/vibedom.git
+uv tool install git+https://github.com/timsweb/vibedom.git
 ```
 
-[pipx](https://pipx.pypa.io) is recommended — it keeps vibedom isolated and puts the command on your PATH. Plain `pip install` also works.
+[uv](https://docs.astral.sh/uv/) is recommended — it keeps vibedom isolated and puts the command on your PATH. [pipx](https://pipx.pypa.io) also works: `pipx install git+https://github.com/timsweb/vibedom.git`
 
 ## Quick Start
 
@@ -69,8 +69,8 @@ See [docs/USAGE.md](docs/USAGE.md) for the full usage guide.
 ```bash
 git clone https://github.com/timsweb/vibedom.git
 cd vibedom
-pip install -e .
-pytest tests/ -v
+uv sync
+uv run pytest tests/ -v
 ```
 
 ## License
