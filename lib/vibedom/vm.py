@@ -171,6 +171,9 @@ class VMManager:
         if self.runtime != 'apple':
             cmd += ['--add-host', 'host.docker.internal:host-gateway']
         cmd += [
+            # Host IP — lets apps inside the container reach host-bound services
+            # (Docker Compose ports, etc.) without hardcoding an address.
+            '-e', f'HOST_IP={proxy_host}',
             # Proxy environment variables
             '-e', f'HTTP_PROXY={proxy_url}',
             '-e', f'HTTPS_PROXY={proxy_url}',
