@@ -1,8 +1,11 @@
+import pytest
 import subprocess
 import tempfile
 from pathlib import Path
 import time
 import shutil
+
+pytestmark = pytest.mark.integration
 
 def test_full_workflow():
     """Test complete git bundle workflow: init -> run -> stop."""

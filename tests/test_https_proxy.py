@@ -3,6 +3,8 @@ import shutil
 from pathlib import Path
 from vibedom.vm import VMManager
 
+pytestmark = pytest.mark.integration
+
 @pytest.fixture
 def test_workspace(tmp_path):
     """Create test workspace."""

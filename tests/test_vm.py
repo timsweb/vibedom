@@ -23,6 +23,7 @@ def test_config():
         config_dir = Path(tmpdir)
         yield config_dir
 
+@pytest.mark.integration
 def test_vm_start_stop(test_workspace, test_config):
     """Should start and stop VM successfully."""
     vm = VMManager(test_workspace, test_config)
@@ -36,6 +37,7 @@ def test_vm_start_stop(test_workspace, test_config):
 
     vm.stop()
 
+@pytest.mark.integration
 def test_vm_git_repo_initialized(test_workspace, test_config):
     """VM should initialize git repo from workspace."""
     import subprocess
@@ -61,6 +63,7 @@ def test_vm_git_repo_initialized(test_workspace, test_config):
         vm.stop()
         shutil.rmtree(session.session_dir, ignore_errors=True)
 
+@pytest.mark.integration
 def test_vm_mounts_session_repo(test_workspace, test_config):
     """VM should mount session repo directory."""
     session = Session(test_workspace, Path('/tmp/vibedom-test-logs'))
@@ -148,24 +151,25 @@ def test_start_uses_apple_runtime(test_workspace, test_config):
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
         vm = VMManager(test_workspace, test_config)
 
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-            mock_proxy = MagicMock()
-            mock_proxy.start.return_value = 54321
-            mock_proxy.ca_cert_path = None
-            mock_proxy_cls.return_value = mock_proxy
-            with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass
+    with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+            with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+                mock_proxy = MagicMock()
+                mock_proxy.start.return_value = 54321
+                mock_proxy.ca_cert_path = None
+                mock_proxy_cls.return_value = mock_proxy
+                with patch('shutil.copy'):
+                    try:
+                        vm.start()
+                    except RuntimeError:
+                        pass
 
-        calls = mock_run.call_args_list
-        run_call = next(c for c in calls if 'run' in c[0][0])
-        assert run_call[0][0][0] == 'container'
-        assert '--detach' in run_call[0][0]
-        assert '--privileged' not in run_call[0][0]
+            calls = mock_run.call_args_list
+            run_call = next(c for c in calls if 'run' in c[0][0])
+            assert run_call[0][0][0] == 'container'
+            assert '--detach' in run_call[0][0]
+            assert '--privileged' not in run_call[0][0]
 
 
 def test_start_uses_docker_runtime(test_workspace, test_config):
@@ -366,22 +370,23 @@ def test_vm_start_network_ignored_with_apple_runtime(tmp_path):
     vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
                    runtime='apple', network='myproject_default')
 
-    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-        mock_proxy = MagicMock()
-        mock_proxy.start.return_value = 54321
-        mock_proxy.ca_cert_path = None
-        mock_proxy_cls.return_value = mock_proxy
+    with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
 
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                import io
-                with patch('vibedom.vm.sys.stderr', new_callable=io.StringIO) as mock_stderr:
-                    try:
-                        vm.start()
-                    except RuntimeError:
-                        pass
-                    warning = mock_stderr.getvalue()
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch('shutil.copy'):
+                    import io
+                    with patch('vibedom.vm.sys.stderr', new_callable=io.StringIO) as mock_stderr:
+                        try:
+                            vm.start()
+                        except RuntimeError:
+                            pass
+                        warning = mock_stderr.getvalue()
 
     assert 'network' in warning.lower()
     assert 'apple' in warning.lower() or 'not supported' in warning.lower()

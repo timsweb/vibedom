@@ -31,3 +31,7 @@ vibedom = ["container/*", "config/*"]
 testpaths = ["tests"]
 pythonpath = ["lib", "lib/vibedom/container"]
 python_files = "test_*.py"
+addopts = ["-m", "not integration"]
+markers = [
+    "integration: requires a running container runtime (Docker or apple/container)",
+]

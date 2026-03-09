@@ -6,6 +6,8 @@ import pytest
 from vibedom.vm import VMManager
 from vibedom.whitelist import create_default_whitelist
 
+pytestmark = pytest.mark.integration
+
 @pytest.fixture
 def vm_with_proxy():
     """Start VM with mitmproxy configured."""

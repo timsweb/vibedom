@@ -7,6 +7,8 @@ from pathlib import Path
 from vibedom.vm import VMManager
 from vibedom.session import Session
 
+pytestmark = pytest.mark.integration
+
 @pytest.fixture
 def git_workspace(tmp_path):
     """Create a test workspace with git repo."""
@@ -38,10 +40,11 @@ def config_dir(tmp_path):
     config = tmp_path / 'config'
     config.mkdir()
 
-    # Copy mitmproxy addon
+    # Copy mitmproxy addon if available
     import vibedom
-    addon_src = Path(vibedom.__file__).parent.parent.parent / 'vm' / 'mitmproxy_addon.py'
-    shutil.copy(addon_src, config / 'mitmproxy_addon.py')
+    addon_src = Path(vibedom.__file__).parent / 'container' / 'mitmproxy_addon.py'
+    if addon_src.exists():
+        shutil.copy(addon_src, config / 'mitmproxy_addon.py')
 
     # Create whitelist
     (config / 'trusted_domains.txt').write_text('pypi.org\n')
