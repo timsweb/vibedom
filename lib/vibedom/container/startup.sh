@@ -81,6 +81,16 @@ else
     echo "Warning: CA cert not found at $CA_CERT"
 fi
 
+# Inject host aliases from VIBEDOM_HOST_ALIASES env var (used by apple/container runtime)
+# Format: hostname1=ip1,hostname2=ip2
+if [ -n "$VIBEDOM_HOST_ALIASES" ]; then
+    echo "Adding host aliases to /etc/hosts..."
+    echo "$VIBEDOM_HOST_ALIASES" | tr ',' '\n' | while IFS='=' read -r hostname ip; do
+        echo "$ip $hostname" >> /etc/hosts
+        echo "Added host alias: $hostname -> $ip"
+    done
+fi
+
 # Signal readiness
 touch /tmp/.vm-ready
 

@@ -16,7 +16,8 @@ class VMManager:
 
     def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None,
                  runtime: Optional[str] = None, network: Optional[str] = None,
-                 base_image: Optional[str] = None):
+                 base_image: Optional[str] = None,
+                 host_aliases: Optional[dict] = None):
         """Initialize VM manager.
 
         Args:
@@ -26,6 +27,8 @@ class VMManager:
             runtime: Container runtime ('auto', 'docker', or 'apple'). If None, auto-detects.
             network: Docker network name to join (for project DB/service access).
             base_image: Project base image to layer vibedom on top of. If None, uses vibedom-alpine.
+            host_aliases: Dict of hostname -> IP mappings injected into container /etc/hosts.
+                Use 'host' as value to resolve to the host machine IP.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
@@ -34,6 +37,7 @@ class VMManager:
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.network = network
         self.base_image = base_image
+        self.host_aliases = host_aliases or {}
         self._proxy: Optional[ProxyManager] = None
 
     @staticmethod
@@ -207,6 +211,19 @@ class VMManager:
                 )
             else:
                 cmd += ['--network', self.network]
+
+        if self.host_aliases:
+            if self.runtime == 'apple':
+                # apple/container doesn't support --add-host; inject via env var handled in startup.sh
+                aliases_str = ','.join(
+                    f'{h}={proxy_host if ip == "host" else ip}'
+                    for h, ip in self.host_aliases.items()
+                )
+                cmd += ['-e', f'VIBEDOM_HOST_ALIASES={aliases_str}']
+            else:
+                for hostname, ip in self.host_aliases.items():
+                    resolved = proxy_host if ip == 'host' else ip
+                    cmd += ['--add-host', f'{hostname}:{resolved}']
 
         # Claude/OpenCode config - shared persistent volume across all workspaces
         cmd += ['-v', 'vibedom-claude-config:/root/.claude']

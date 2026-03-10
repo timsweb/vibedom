@@ -146,7 +146,8 @@ def run(workspace, runtime):
                        session_dir=session.session_dir,
                        runtime=resolved_runtime,
                        network=project_config.network if project_config else None,
-                       base_image=project_config.base_image if project_config else None)
+                       base_image=project_config.base_image if project_config else None,
+                       host_aliases=project_config.host_aliases if project_config else None)
         vm.start()
 
         # Store proxy info so reload-whitelist can send SIGHUP to the host process

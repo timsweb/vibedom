@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-KNOWN_FIELDS = {'base_image', 'network'}
+KNOWN_FIELDS = {'base_image', 'network', 'host_aliases'}
 
 
 @dataclass
@@ -14,6 +14,7 @@ class ProjectConfig:
     """Project-specific vibedom configuration from vibedom.yml."""
     base_image: Optional[str] = None
     network: Optional[str] = None
+    host_aliases: Optional[dict] = None
 
     @classmethod
     def load(cls, workspace: Path) -> Optional['ProjectConfig']:
@@ -32,4 +33,5 @@ class ProjectConfig:
         return cls(
             base_image=data.get('base_image'),
             network=data.get('network'),
+            host_aliases=data.get('host_aliases'),
         )

@@ -410,3 +410,98 @@ def test_vm_stop_stops_proxy(tmp_path):
         vm.stop()
 
     assert mock_proxy.stop.called
+
+
+def test_vm_start_adds_host_aliases_for_docker(tmp_path):
+    """start() should add --add-host flags for each host_alias when runtime is docker."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                   runtime='docker',
+                   host_aliases={'wapi-redis': 'host', 'custom-svc': '10.0.0.5'})
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    cmd_str = ' '.join(cmd)
+    assert '--add-host' in cmd_str
+    assert 'wapi-redis:host.docker.internal' in cmd_str
+    assert 'custom-svc:10.0.0.5' in cmd_str
+
+
+def test_vm_start_adds_host_aliases_env_for_apple(tmp_path):
+    """start() should set VIBEDOM_HOST_ALIASES env var for apple/container runtime."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                   runtime='apple',
+                   host_aliases={'wapi-redis': 'host', 'wapi-mysql': 'host'})
+
+    with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                with patch('shutil.copy'):
+                    try:
+                        vm.start()
+                    except RuntimeError:
+                        pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    # Find the VIBEDOM_HOST_ALIASES value
+    aliases_value = None
+    for i, arg in enumerate(cmd):
+        if arg == '-e' and i + 1 < len(cmd) and cmd[i + 1].startswith('VIBEDOM_HOST_ALIASES='):
+            aliases_value = cmd[i + 1][len('VIBEDOM_HOST_ALIASES='):]
+            break
+    assert aliases_value is not None, "VIBEDOM_HOST_ALIASES env var not found in command"
+    aliases = dict(pair.split('=', 1) for pair in aliases_value.split(','))
+    assert aliases.get('wapi-redis') == '192.168.64.1'
+    assert aliases.get('wapi-mysql') == '192.168.64.1'
+
+
+def test_vm_start_no_host_aliases_adds_no_add_host(tmp_path):
+    """start() should not add --add-host flags when host_aliases is empty."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    # host.docker.internal is added for Docker by default, but no extra --add-host entries
+    add_host_entries = [cmd[i + 1] for i, a in enumerate(cmd) if a == '--add-host']
+    non_default = [e for e in add_host_entries if not e.startswith('host.docker.internal')]
+    assert non_default == []

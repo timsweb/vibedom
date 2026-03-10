@@ -710,6 +710,30 @@ def test_run_reads_vibedom_yml(tmp_path):
     assert call_kwargs.get('network') == 'myapp_net'
 
 
+def test_run_passes_host_aliases_from_vibedom_yml(tmp_path):
+    """vibedom run should pass host_aliases from vibedom.yml to VMManager."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    (workspace / 'vibedom.yml').write_text(
+        'host_aliases:\n  wapi-redis: host\n  wapi-mysql: host\n'
+    )
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm = MagicMock()
+                    mock_vm._proxy = None
+                    mock_vm_cls.return_value = mock_vm
+
+                    result = runner.invoke(main, ['run', str(workspace)])
+
+    call_kwargs = mock_vm_cls.call_args[1]
+    assert call_kwargs.get('host_aliases') == {'wapi-redis': 'host', 'wapi-mysql': 'host'}
+
+
 def test_run_stores_proxy_info_in_state(tmp_path):
     """vibedom run should save proxy_port and proxy_pid to state.json."""
     workspace = tmp_path / 'myapp'
