@@ -5,8 +5,11 @@ FROM ${BASE_IMAGE}
 
 # Install required tools if not present in the project base image.
 # Build runs before the proxy starts, so network is clean and unrestricted.
+# For Alpine: upgrade musl to 1.2.5+ first (Claude requires posix_getdents, added in 1.2.5).
+# Only musl is pulled from edge; everything else comes from the image's own repos.
 RUN (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash curl ca-certificates 2>/dev/null) || \
-    apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep gcompat
+    (apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/main/ musl --upgrade && \
+     apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep)
 
 # Install Claude Code CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
