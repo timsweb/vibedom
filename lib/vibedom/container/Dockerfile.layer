@@ -19,4 +19,5 @@ RUN mkdir -p /mnt/workspace /work /mnt/config /mnt/session
 COPY startup.sh /usr/local/bin/vibedom-startup.sh
 RUN chmod +x /usr/local/bin/vibedom-startup.sh
 
-CMD ["/usr/local/bin/vibedom-startup.sh"]
+ENTRYPOINT ["/usr/local/bin/vibedom-startup.sh"]
+CMD []
