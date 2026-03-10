@@ -3,11 +3,10 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# Install git if not already present.
-# Tries apt-get (Debian/Ubuntu) then apk (Alpine) — ignores failure if git already installed.
-RUN command -v git >/dev/null 2>&1 || \
-    (apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates 2>/dev/null) || \
-    (apk add --no-cache git ca-certificates 2>/dev/null) || true
+# Install git and bash (try apt-get for Debian/Ubuntu, fall back to apk for Alpine).
+# No || true: if both package managers fail the build fails visibly.
+RUN (apt-get update -qq && apt-get install -y --no-install-recommends git bash ca-certificates 2>/dev/null) || \
+    apk add --no-cache git bash ca-certificates
 
 # Ensure CA cert directory exists (for update-ca-certificates in startup.sh)
 RUN mkdir -p /usr/local/share/ca-certificates
