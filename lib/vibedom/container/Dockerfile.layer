@@ -3,16 +3,11 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# Install git and bash (try apt-get for Debian/Ubuntu, fall back to apk for Alpine).
-# No || true: if both package managers fail the build fails visibly.
-RUN (apt-get update -qq && apt-get install -y --no-install-recommends git bash ca-certificates 2>/dev/null) || \
-    apk add --no-cache git bash ca-certificates
-
-# Ensure CA cert directory exists (for update-ca-certificates in startup.sh)
-RUN mkdir -p /usr/local/share/ca-certificates
+# No network operations here — apple/container build has restricted network access.
+# git and bash are installed at container start time by startup.sh if not already present.
 
 # Create required vibedom mount points
-RUN mkdir -p /mnt/workspace /work /mnt/config /mnt/session
+RUN mkdir -p /usr/local/share/ca-certificates /mnt/workspace /work /mnt/config /mnt/session
 
 # Copy vibedom startup script
 COPY startup.sh /usr/local/bin/vibedom-startup.sh

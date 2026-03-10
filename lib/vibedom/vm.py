@@ -139,15 +139,16 @@ class VMManager:
         gitleaks_dst = self.config_dir / 'gitleaks.toml'
         shutil.copy(gitleaks_src, gitleaks_dst)
 
+        # Build image before starting proxy — mitmproxy interferes with apple/container
+        # build-time network, so we build first while the network is clean.
+        image = self._image_name()
+
         # Start host proxy
         self._proxy = ProxyManager(
             session_dir=self.session_dir,
             config_dir=self.config_dir,
         )
         proxy_port = self._proxy.start()
-
-        # Determine image (builds project layer if base_image set)
-        image = self._image_name()
 
         # Ensure mitmproxy conf dir exists so the CA cert will be readable via /mnt/config mount
         conf_dir = self.config_dir / 'mitmproxy'

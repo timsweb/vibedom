@@ -3,6 +3,14 @@ set -e
 
 echo "Starting vibedom VM..."
 
+# Install git and bash if not present (project base images may lack them).
+# Runs at container start time where network works, unlike container build.
+if ! command -v git >/dev/null 2>&1; then
+    echo "Installing git and bash..."
+    (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash ca-certificates 2>/dev/null) || \
+    apk add --no-cache git bash ca-certificates
+fi
+
 # Initialize git repository from workspace
 if [ -d /mnt/workspace/.git ]; then
     echo "Cloning git repository from workspace..."
