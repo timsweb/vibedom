@@ -3,8 +3,10 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# No network operations here — apple/container build has restricted network access.
-# git and bash are installed at container start time by startup.sh if not already present.
+# Install git and bash if not present in the project base image.
+# Build runs before the proxy starts, so network is clean and unrestricted.
+RUN (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash ca-certificates 2>/dev/null) || \
+    apk add --no-cache git bash ca-certificates
 
 # Create required vibedom mount points
 RUN mkdir -p /usr/local/share/ca-certificates /mnt/workspace /work /mnt/config /mnt/session
