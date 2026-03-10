@@ -96,7 +96,9 @@ echo "VM ready!"
 
 # Keep container running and periodically persist Claude config
 sync_claude_config() {
-    [ -f "$CLAUDE_CONFIG" ] && cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG_PERSIST" 2>/dev/null
+    if [ -f "$CLAUDE_CONFIG" ]; then
+        cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG_PERSIST" 2>/dev/null || true
+    fi
 }
 trap 'sync_claude_config; exit 0' SIGTERM SIGINT
 
