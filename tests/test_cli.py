@@ -383,8 +383,8 @@ def test_merge_command_keep_history(tmp_path):
             assert not any('--squash' in ' '.join(call[0][0]) for call in merge_calls)
 
 
-def test_merge_fails_with_uncommitted_changes(tmp_path):
-    """merge should abort if workspace has uncommitted changes."""
+def test_merge_proceeds_with_uncommitted_changes(tmp_path):
+    """merge should proceed even when workspace has uncommitted changes (git handles conflicts)."""
     from vibedom.cli import main
 
     workspace = tmp_path / 'myapp'
@@ -394,6 +394,7 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
     session_dir = logs_dir / 'session-20260218-130000-000000'
     session_dir.mkdir(parents=True)
     (session_dir / 'state.json').write_text(_make_complete_state(workspace))
+    (session_dir / 'repo.bundle').write_bytes(b'bundle')
 
     runner = CliRunner()
 
@@ -403,13 +404,18 @@ def test_merge_fails_with_uncommitted_changes(tmp_path):
         with patch('subprocess.run') as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # git rev-parse --git-dir (is git repo)
-                MagicMock(returncode=0, stdout=' M file.txt\n'),  # git status returns dirty state
+                MagicMock(returncode=0, stdout='main\n'),  # git rev-parse --abbrev-ref HEAD
+                MagicMock(returncode=1),  # git remote get-url (not found, will add)
+                MagicMock(returncode=0),  # git remote add
+                MagicMock(returncode=0),  # git fetch
+                MagicMock(returncode=0),  # git merge --squash
+                MagicMock(returncode=0),  # git commit
+                MagicMock(returncode=0),  # git remote remove (cleanup)
             ]
 
             result = runner.invoke(main, ['merge', 'myapp-happy-turing'])
 
-            assert result.exit_code == 1
-            assert 'uncommitted changes' in result.output
+            assert result.exit_code == 0
 
 
 def test_merge_fails_if_session_running(tmp_path):

@@ -440,16 +440,6 @@ def merge(session_id: str, branch: Optional[str], keep_history: bool) -> None:
         click.secho(f"❌ Error: {workspace_path} is not a git repository", fg='red')
         sys.exit(1)
 
-    # Check for uncommitted changes
-    result = subprocess.run(
-        ['git', '-C', str(workspace_path), 'status', '--porcelain'],
-        capture_output=True, text=True
-    )
-    if result.stdout.strip():
-        click.secho("❌ Cannot merge: you have uncommitted changes", fg='red')
-        click.echo("Commit or stash them first, then try again.")
-        sys.exit(1)
-
     if session_obj.is_container_running():
         click.secho("❌ Session is still running. Stop it first:", fg='red')
         click.echo(f"  vibedom stop {session_obj.state.session_id}")
