@@ -6,7 +6,7 @@ FROM ${BASE_IMAGE}
 # Install required tools if not present in the project base image.
 # Build runs before the proxy starts, so network is clean and unrestricted.
 RUN (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash curl ca-certificates 2>/dev/null) || \
-    apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep
+    apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep gcompat
 
 # Install Claude Code CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
