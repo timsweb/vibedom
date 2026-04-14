@@ -21,6 +21,11 @@ if [ -d /mnt/workspace/.git ]; then
     fi
 
     echo "Working on branch: $CURRENT_BRANCH"
+
+    # Copy .env* files from workspace (typically gitignored but needed at runtime)
+    for env_file in /mnt/workspace/.env /mnt/workspace/.env.*; do
+        [ -f "$env_file" ] && cp "$env_file" /work/repo/ && echo "Copied $(basename $env_file)"
+    done
 else
     echo "Non-git workspace, initializing fresh repository..."
     mkdir -p /work/repo
@@ -54,10 +59,12 @@ else
     echo "No previous Claude config found (first run)"
 fi
 
-# Start SSH agent with deploy key
-if [ -f /mnt/config/id_ed25519_vibedom ]; then
-    eval $(ssh-agent -s)
-    ssh-add /mnt/config/id_ed25519_vibedom 2>/dev/null || true
+# Start SSH agent with deploy key at a fixed socket path so exec sessions can use it
+if [ -f /mnt/config/keys/id_ed25519_vibedom ]; then
+    ssh-agent -a /tmp/ssh-agent.sock > /dev/null
+    SSH_AUTH_SOCK=/tmp/ssh-agent.sock ssh-add /mnt/config/keys/id_ed25519_vibedom 2>/dev/null || true
+    echo "SSH_AUTH_SOCK=/tmp/ssh-agent.sock" >> /etc/environment
+    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
 fi
 
 # Proxy environment variables are set by container runtime (-e flags)

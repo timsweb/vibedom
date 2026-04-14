@@ -8,7 +8,8 @@ FROM ${BASE_IMAGE}
 # For Alpine: upgrade musl to 1.2.5+ first (Claude requires posix_getdents, added in 1.2.5).
 # Only musl is pulled from edge; everything else comes from the image's own repos.
 RUN (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash curl ca-certificates 2>/dev/null) || \
-    (apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/main/ musl --upgrade && \
+    (apk del g++ musl-dev libc-dev 2>/dev/null || true && \
+     apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/main/ musl --upgrade && \
      apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep)
 
 # Install Claude Code CLI
@@ -23,6 +24,9 @@ RUN mkdir -p /usr/local/share/ca-certificates /mnt/workspace /work /mnt/config /
 # Copy vibedom startup script
 COPY startup.sh /usr/local/bin/vibedom-startup.sh
 RUN chmod +x /usr/local/bin/vibedom-startup.sh
+
+# Make SSH_AUTH_SOCK available in exec sessions
+RUN echo '[ -f /tmp/ssh-agent.sock ] && export SSH_AUTH_SOCK=/tmp/ssh-agent.sock' > /etc/profile.d/vibedom-ssh.sh
 
 ENTRYPOINT ["/usr/local/bin/vibedom-startup.sh"]
 CMD []
