@@ -62,3 +62,35 @@ def test_project_config_host_aliases_with_explicit_ip(tmp_path):
     )
     config = ProjectConfig.load(tmp_path)
     assert config.host_aliases == {'custom-service': '192.168.1.100'}
+
+
+def test_project_config_loads_setup(tmp_path):
+    """Should parse setup list from vibedom.yml."""
+    (tmp_path / 'vibedom.yml').write_text(
+        'setup:\n  - composer install\n  - cp .env.example .env\n'
+    )
+    config = ProjectConfig.load(tmp_path)
+    assert config.setup == ['composer install', 'cp .env.example .env']
+
+
+def test_project_config_setup_defaults_to_none(tmp_path):
+    """setup is optional and defaults to None."""
+    (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.setup is None
+
+
+def test_project_config_loads_sync_exclude(tmp_path):
+    """Should parse sync_exclude list from vibedom.yml."""
+    (tmp_path / 'vibedom.yml').write_text(
+        'sync_exclude:\n  - vendor/\n  - storage/logs/\n'
+    )
+    config = ProjectConfig.load(tmp_path)
+    assert config.sync_exclude == ['vendor/', 'storage/logs/']
+
+
+def test_project_config_sync_exclude_defaults_to_none(tmp_path):
+    """sync_exclude is optional and defaults to None."""
+    (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.sync_exclude is None

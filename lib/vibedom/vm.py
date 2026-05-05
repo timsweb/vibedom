@@ -17,22 +17,26 @@ class VMManager:
     def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None,
                  runtime: Optional[str] = None, network: Optional[str] = None,
                  base_image: Optional[str] = None,
-                 host_aliases: Optional[dict] = None):
+                 host_aliases: Optional[dict] = None,
+                 container_dir: Optional[Path] = None):
         """Initialize VM manager.
 
         Args:
             workspace: Path to workspace directory
             config_dir: Path to config directory
-            session_dir: Path to session directory (for repo mount)
+            session_dir: Path to session directory (for session logs mount and legacy repo mount)
             runtime: Container runtime ('auto', 'docker', or 'apple'). If None, auto-detects.
             network: Docker network name to join (for project DB/service access).
             base_image: Project base image to layer vibedom on top of. If None, uses vibedom-alpine.
             host_aliases: Dict of hostname -> IP mappings injected into container /etc/hosts.
                 Use 'host' as value to resolve to the host machine IP.
+            container_dir: Path for persistent container state (repo bind mount comes from here).
+                Takes precedence over session_dir for the repo mount.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
         self.session_dir = session_dir.resolve() if session_dir else None
+        self.container_dir = container_dir.resolve() if container_dir else None
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.network = network
@@ -133,6 +137,62 @@ class VMManager:
         networks = json.loads(result.stdout)
         return networks[0]['status']['ipv4Gateway']
 
+    def exists(self) -> bool:
+        """Check whether the container exists (running or stopped)."""
+        result = subprocess.run(
+            [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def is_running(self) -> bool:
+        """Check whether the container is currently running."""
+        result = subprocess.run(
+            [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and result.stdout.strip() == 'running'
+
+    def pause(self) -> None:
+        """Stop the container without removing it (preserves filesystem)."""
+        try:
+            subprocess.run(
+                [self.runtime_cmd, 'stop', self.container_name],
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            pass
+
+    def restart(self) -> None:
+        """Start a stopped container and wait for readiness."""
+        try:
+            subprocess.run(
+                [self.runtime_cmd, 'start', self.container_name],
+                check=True,
+                capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise RuntimeError(
+                f"Failed to restart container '{self.container_name}': {e}"
+            ) from e
+
+        # Wait for VM to be ready
+        for _ in range(60):
+            result = subprocess.run(
+                [self.runtime_cmd, 'exec', self.container_name,
+                 'test', '-f', '/tmp/.vm-ready'],
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return
+            time.sleep(1)
+        raise RuntimeError(
+            f"VM '{self.container_name}' failed to become ready within 60 seconds"
+        )
+
     def start(self) -> None:
         """Start the VM with workspace mounted."""
         # Stop existing container if any
@@ -147,9 +207,12 @@ class VMManager:
         # build-time network, so we build first while the network is clean.
         image = self._image_name()
 
-        # Start host proxy
+        # Start host proxy — logs go to container_dir or session_dir
+        proxy_log_dir = self.container_dir or self.session_dir
+        if proxy_log_dir is None:
+            raise RuntimeError("Either container_dir or session_dir must be set to start the VM")
         self._proxy = ProxyManager(
-            session_dir=self.session_dir,
+            session_dir=proxy_log_dir,
             config_dir=self.config_dir,
         )
         proxy_port = self._proxy.start()
@@ -196,10 +259,17 @@ class VMManager:
             '-v', f'{self.config_dir}:/mnt/config:ro',
         ]
 
-        if self.session_dir:
+        # Repo mount: prefer container_dir (persistent), fall back to session_dir (legacy)
+        if self.container_dir:
+            repo_dir = self.container_dir / 'repo'
+            repo_dir.mkdir(parents=True, exist_ok=True)
+            cmd += ['-v', f'{repo_dir}:/work/repo']
+        elif self.session_dir:
             repo_dir = self.session_dir / 'repo'
             repo_dir.mkdir(parents=True, exist_ok=True)
             cmd += ['-v', f'{repo_dir}:/work/repo']
+
+        if self.session_dir:
             cmd += ['-v', f'{self.session_dir}:/mnt/session']
 
         if self.network:

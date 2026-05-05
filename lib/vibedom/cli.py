@@ -2,6 +2,7 @@
 """vibedom CLI - Secure AI agent sandbox."""
 
 import os
+import shutil
 import signal as signal_module
 import sys
 import subprocess
@@ -16,6 +17,7 @@ from vibedom.vm import VMManager
 from vibedom.session import Session, SessionCleanup, SessionRegistry
 from vibedom.project_config import ProjectConfig
 from vibedom.proxy import ProxyManager
+from vibedom.container_state import ContainerState, ContainerRegistry
 
 
 def _execute_deletions(to_delete: list, skipped: int, force: bool, dry_run: bool) -> None:
@@ -711,6 +713,560 @@ def housekeeping(days: int, force: bool, dry_run: bool) -> None:
 
     click.echo(f"Found {len(to_delete)} session(s) older than {days} days")
     _execute_deletions(to_delete, skipped, force, dry_run)
+
+
+def _proxy_is_alive(pid: Optional[int]) -> bool:
+    """Check whether a proxy process is still running.
+
+    os.kill(pid, 0) raises ProcessLookupError when the process does not exist
+    and PermissionError (EPERM) when it exists but is owned by another user.
+    Both mean the proxy we started is not reachable; any other OSError is re-raised.
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _ensure_proxy_running(
+    container_state: ContainerState,
+    container_dir: Path,
+    config_dir: Path,
+) -> Optional[ProxyManager]:
+    """Ensure the host proxy is running. Restarts it if dead. Returns the proxy manager or None."""
+    if _proxy_is_alive(container_state.proxy_pid):
+        return None  # Already running
+
+    proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+    try:
+        proxy.start(port=container_state.proxy_port)
+    except RuntimeError as e:
+        click.secho(f"⚠️  Could not start proxy: {e}", fg='yellow')
+        return None
+    container_state.proxy_pid = proxy.pid
+    container_state.proxy_port = proxy.port
+    container_state.save(container_dir)
+    click.echo(f"Proxy started on port {proxy.port} (PID {proxy.pid})")
+    return proxy
+
+
+@main.command()
+@click.argument('workspace', type=click.Path(exists=True))
+@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'],
+              case_sensitive=False), default='auto',
+              help='Container runtime (auto-detect, docker, or apple)')
+def up(workspace, runtime):
+    """Start a persistent project container.
+
+    Creates the container on first use; restarts it if stopped; does nothing if already running.
+    """
+    workspace_path = Path(workspace).resolve()
+    if not workspace_path.is_dir():
+        click.secho(f"Error: {workspace_path} is not a directory", fg='red')
+        sys.exit(1)
+
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    container_dir = containers_dir / workspace_path.name
+    container_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        resolved_runtime, _ = VMManager._detect_runtime(
+            runtime if runtime != 'auto' else None
+        )
+    except RuntimeError as e:
+        click.secho(f"Error: {e}", fg='red')
+        sys.exit(1)
+
+    project_config = ProjectConfig.load(workspace_path)
+    registry = ContainerRegistry(containers_dir)
+    container_state = registry.find(workspace_path.name)
+
+    vm = VMManager(
+        workspace_path, config_dir,
+        container_dir=container_dir,
+        runtime=resolved_runtime,
+        network=project_config.network if project_config else None,
+        base_image=project_config.base_image if project_config else None,
+        host_aliases=project_config.host_aliases if project_config else None,
+    )
+
+    if vm.is_running():
+        click.echo(f"Container '{vm.container_name}' is already running.")
+        if container_state:
+            _ensure_proxy_running(container_state, container_dir, config_dir)
+        click.echo(f"Repo: {container_dir / 'repo'}")
+        return
+
+    if vm.exists():
+        # Container stopped — restart proxy then container
+        click.echo(f"Restarting container '{vm.container_name}'...")
+        if container_state is None:
+            container_state = ContainerState.create(workspace_path, resolved_runtime)
+        proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+        try:
+            proxy.start(port=container_state.proxy_port)
+        except RuntimeError as e:
+            click.secho(f"Error starting proxy: {e}", fg='red')
+            sys.exit(1)
+        try:
+            vm.restart()
+        except RuntimeError as e:
+            proxy.stop()
+            click.secho(f"Error: {e}", fg='red')
+            sys.exit(1)
+        container_state.mark_running(proxy.port, proxy.pid, container_dir)
+    else:
+        # First-time creation
+        click.echo("Scanning for secrets...")
+        findings = scan_workspace(workspace_path)
+        if not review_findings(findings):
+            click.secho("Cancelled", fg='yellow')
+            sys.exit(1)
+
+        click.echo(f"Starting container '{vm.container_name}'...")
+        try:
+            vm.start()
+        except RuntimeError as e:
+            click.secho(f"Error: {e}", fg='red')
+            sys.exit(1)
+
+        container_state = ContainerState.create(workspace_path, resolved_runtime)
+        if vm._proxy:
+            container_state.mark_running(vm._proxy.port, vm._proxy.pid, container_dir)
+        else:
+            container_state.save(container_dir)
+
+        # Run one-time setup commands if specified
+        if project_config and project_config.setup:
+            click.echo("Running setup commands...")
+            for setup_cmd in project_config.setup:
+                click.echo(f"  $ {setup_cmd}")
+                result = vm.exec(['sh', '-c', setup_cmd])
+                if result.returncode != 0:
+                    click.secho(f"  Warning: setup command failed: {result.stderr}", fg='yellow')
+
+    click.echo(f"\nContainer running!")
+    click.echo(f"Workspace: {workspace_path}")
+    click.echo(f"Repo: {container_dir / 'repo'}")
+    click.echo(f"\nTo sync code:")
+    click.echo(f"  vibedom pull {workspace_path.name}   # container -> host")
+    click.echo(f"  vibedom push {workspace_path.name}   # host -> container")
+    click.echo(f"\nTo open a shell:")
+    click.echo(f"  vibedom shell {workspace_path.name}")
+    click.echo(f"\nTo stop:")
+    click.echo(f"  vibedom down {workspace_path.name}")
+
+
+@main.command()
+@click.argument('workspace', required=False)
+def down(workspace):
+    """Stop a persistent container (preserves filesystem).
+
+    WORKSPACE is the workspace directory name or path.
+    If omitted, uses the only running container or prompts.
+    """
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    identifier = workspace or ''
+    container_state = registry.find(identifier) if identifier else None
+
+    if container_state is None and not identifier:
+        all_containers = [c for c in registry.all() if c.status == 'running']
+        if len(all_containers) == 1:
+            container_state = all_containers[0]
+        elif len(all_containers) > 1:
+            click.secho("Multiple running containers. Specify a workspace name.", fg='red')
+            for c in all_containers:
+                click.echo(f"  {Path(c.workspace).name}")
+            sys.exit(1)
+        else:
+            click.secho("No running containers found.", fg='yellow')
+            return
+
+    if container_state is None:
+        click.secho(f"No container found for '{workspace}'.", fg='red')
+        sys.exit(1)
+
+    container_dir = containers_dir / Path(container_state.workspace).name
+    vm = VMManager(
+        Path(container_state.workspace), config_dir,
+        container_dir=container_dir,
+        runtime=container_state.runtime,
+    )
+
+    click.echo(f"Stopping container '{container_state.container_name}'...")
+    vm.pause()
+
+    if container_state.proxy_pid:
+        try:
+            os.kill(container_state.proxy_pid, signal_module.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    container_state.mark_stopped(container_dir)
+    click.echo("Container stopped (filesystem preserved). Run 'vibedom up' to restart.")
+
+
+@main.command()
+@click.argument('workspace', required=False)
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+def destroy(workspace, force):
+    """Remove a persistent container and its state.
+
+    WORKSPACE is the workspace directory name or path.
+    This removes the container and its repo — use 'vibedom down' to just stop it.
+    """
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    container_state = registry.find(workspace) if workspace else None
+
+    if container_state is None and not workspace:
+        click.secho("Specify a workspace name.", fg='red')
+        sys.exit(1)
+
+    if container_state is None:
+        click.secho(f"No container found for '{workspace}'.", fg='red')
+        sys.exit(1)
+
+    name = Path(container_state.workspace).name
+    if not force and not click.confirm(
+        f"Destroy container '{container_state.container_name}' and delete repo data for '{name}'?",
+        default=False,
+    ):
+        click.echo("Aborted")
+        return
+
+    container_dir = containers_dir / name
+    vm = VMManager(
+        Path(container_state.workspace), config_dir,
+        container_dir=container_dir,
+        runtime=container_state.runtime,
+    )
+
+    click.echo(f"Destroying container '{container_state.container_name}'...")
+    vm.stop()
+
+    if container_state.proxy_pid:
+        try:
+            os.kill(container_state.proxy_pid, signal_module.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    shutil.rmtree(container_dir, ignore_errors=True)
+    click.echo(f"Container '{container_state.container_name}' destroyed.")
+
+
+@main.command()
+@click.argument('workspace', required=False)
+def status(workspace):
+    """Show status of persistent containers."""
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    if workspace:
+        container_state = registry.find(workspace)
+        if not container_state:
+            click.secho(f"No container found for '{workspace}'.", fg='red')
+            sys.exit(1)
+        containers = [container_state]
+    else:
+        containers = registry.all()
+
+    if not containers:
+        click.echo("No persistent containers found. Run 'vibedom up <workspace>' to create one.")
+        return
+
+    click.echo(f"{'WORKSPACE':<25} {'CONTAINER':<35} {'STATUS':<10} {'PROXY'}")
+    click.echo('-' * 85)
+    for c in containers:
+        workspace_name = Path(c.workspace).name
+        proxy_info = f"port {c.proxy_port}" if c.proxy_port else "none"
+        if c.proxy_pid and _proxy_is_alive(c.proxy_pid):
+            proxy_info += f" (PID {c.proxy_pid})"
+        else:
+            proxy_info += " (dead)" if c.proxy_pid else ""
+        click.echo(
+            f"{workspace_name:<25} "
+            f"{c.container_name:<35} "
+            f"{c.status:<10} "
+            f"{proxy_info}"
+        )
+
+
+@main.command('shell')
+@click.argument('workspace', required=False)
+def shell_cmd(workspace):
+    """Open a shell in a running container's workspace (/work/repo).
+
+    WORKSPACE is the workspace directory name or path.
+    If omitted, uses the only running container or prompts.
+    """
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    container_state = registry.find(workspace) if workspace else None
+
+    if container_state is None and not workspace:
+        running = [c for c in registry.all() if c.status == 'running']
+        if len(running) == 1:
+            container_state = running[0]
+        elif len(running) > 1:
+            click.secho("Multiple running containers. Specify a workspace name.", fg='red')
+            sys.exit(1)
+        else:
+            click.secho("No running containers found.", fg='red')
+            sys.exit(1)
+
+    if container_state is None:
+        click.secho(f"No container found for '{workspace}'.", fg='red')
+        sys.exit(1)
+
+    # Ensure proxy is alive before entering
+    container_dir = containers_dir / Path(container_state.workspace).name
+    _ensure_proxy_running(container_state, container_dir, config_dir)
+
+    runtime_cmd = 'container' if container_state.runtime == 'apple' else 'docker'
+    cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
+           container_state.container_name, 'bash']
+    try:
+        subprocess.run(cmd)
+    except FileNotFoundError:
+        click.secho(f"Error: {runtime_cmd} command not found", fg='red')
+        sys.exit(1)
+
+
+def _validate_sync_paths(paths: tuple, src: Path) -> list[Path]:
+    """Validate and resolve path arguments for sync commands.
+
+    Each path must be relative (no leading '/') and must resolve to a location
+    inside src after resolving any '..' components.  Absolute paths and path
+    traversals that escape src are rejected to prevent accidental writes
+    outside the workspace or container repo.
+
+    Args:
+        paths: Raw path strings provided by the user.
+        src: The source root directory that all paths must stay within.
+
+    Returns:
+        List of resolved absolute Path objects, each guaranteed to be inside src.
+
+    Raises:
+        click.ClickException: If any path is invalid or escapes src.
+    """
+    validated = []
+    src_resolved = src.resolve()
+    for raw in paths:
+        if Path(raw).is_absolute():
+            raise click.ClickException(
+                f"Path argument must be relative, not absolute: '{raw}'"
+            )
+        resolved = (src_resolved / raw).resolve()
+        try:
+            resolved.relative_to(src_resolved)
+        except ValueError:
+            raise click.ClickException(
+                f"Path '{raw}' escapes the source directory — path traversal not allowed"
+            )
+        validated.append(resolved)
+    return validated
+
+
+def _build_rsync_cmd(
+    src: Path,
+    dst: Path,
+    paths: tuple,
+    delete: bool,
+    dry_run: bool,
+    extra_excludes: list,
+) -> list:
+    """Build an rsync command for syncing src to dst.
+
+    Args:
+        src: Source directory (trailing slash makes rsync sync its contents)
+        dst: Destination directory
+        paths: Specific sub-paths to sync (relative to src). If empty, sync all.
+            All paths must have already been validated via _validate_sync_paths.
+        delete: Include --delete flag (destructive)
+        dry_run: Include --dry-run flag
+        extra_excludes: Additional patterns to exclude beyond .gitignore
+    """
+    cmd = ['rsync', '-av']
+
+    if dry_run:
+        cmd.append('--dry-run')
+
+    # Exclude .git always
+    cmd += ['--exclude=.git/']
+
+    # Use .gitignore rules from the workspace (source side)
+    cmd += ['--filter=:- .gitignore']
+
+    for pattern in extra_excludes:
+        cmd.append(f'--exclude={pattern}')
+
+    if delete:
+        cmd.append('--delete')
+
+    if paths:
+        # Sync only specific paths.  rsync expects: rsync [opts] src1 src2 ... dst
+        # All source paths are listed first, then the single destination.
+        src_resolved = src.resolve()
+        dst_resolved = dst.resolve()
+        for raw in paths:
+            resolved_src = (src_resolved / raw).resolve()
+            cmd.append(str(resolved_src))
+        cmd.append(str(dst_resolved))
+    else:
+        cmd.append(f'{src}/')
+        cmd.append(str(dst))
+
+    return cmd
+
+
+@main.command()
+@click.argument('workspace')
+@click.argument('paths', nargs=-1)
+@click.option('--delete', is_flag=True, help='Also remove files in host that are absent in container')
+@click.option('--dry-run', '-n', is_flag=True, help='Show what would be synced without doing it')
+@click.option('--yes', '-y', is_flag=True, help='Skip confirmation for full-tree sync')
+def pull(workspace, paths, delete, dry_run, yes):
+    """Sync code from container to host workspace.
+
+    WORKSPACE is the workspace directory name or path.
+    PATHS are optional relative paths to sync (e.g. src/ app/).
+    If no paths given, syncs everything (respecting .gitignore) after confirmation.
+    """
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    container_state = registry.find(workspace)
+    if container_state is None:
+        click.secho(f"No container found for '{workspace}'.", fg='red')
+        sys.exit(1)
+
+    workspace_path = Path(container_state.workspace)
+    container_dir = containers_dir / workspace_path.name
+    repo_dir = container_dir / 'repo'
+
+    if paths:
+        try:
+            _validate_sync_paths(paths, repo_dir)
+        except click.ClickException as e:
+            click.secho(f"Error: {e.format_message()}", fg='red')
+            sys.exit(1)
+
+    # Full-tree sync without --dry-run requires confirmation
+    if not paths and not dry_run and not yes:
+        if not click.confirm(
+            f"Sync all files from container repo to {workspace_path.name}?",
+            default=False,
+        ):
+            click.echo("Aborted")
+            return
+
+    project_config = ProjectConfig.load(workspace_path)
+    extra_excludes = (project_config.sync_exclude or []) if project_config else []
+
+    cmd = _build_rsync_cmd(
+        src=repo_dir,
+        dst=workspace_path,
+        paths=paths,
+        delete=delete,
+        dry_run=dry_run,
+        extra_excludes=extra_excludes,
+    )
+
+    if dry_run:
+        click.echo("Dry run — showing what would be synced:")
+    else:
+        click.echo(f"Pulling from container to {workspace_path.name}...")
+
+    result = subprocess.run(cmd, capture_output=False, text=True)
+    if result.returncode != 0:
+        click.secho("rsync failed", fg='red')
+        sys.exit(result.returncode)
+
+    if not dry_run:
+        click.echo("Done.")
+
+
+@main.command()
+@click.argument('workspace')
+@click.argument('paths', nargs=-1)
+@click.option('--delete', is_flag=True, help='Also remove files in container that are absent on host')
+@click.option('--dry-run', '-n', is_flag=True, help='Show what would be synced without doing it')
+@click.option('--yes', '-y', is_flag=True, help='Skip confirmation for full-tree sync')
+def push(workspace, paths, delete, dry_run, yes):
+    """Sync code from host workspace to container.
+
+    WORKSPACE is the workspace directory name or path.
+    PATHS are optional relative paths to sync (e.g. src/ app/).
+    If no paths given, syncs everything (respecting .gitignore) after confirmation.
+    """
+    config_dir = Path.home() / '.vibedom'
+    containers_dir = config_dir / 'containers'
+    registry = ContainerRegistry(containers_dir)
+
+    container_state = registry.find(workspace)
+    if container_state is None:
+        click.secho(f"No container found for '{workspace}'.", fg='red')
+        sys.exit(1)
+
+    workspace_path = Path(container_state.workspace)
+    container_dir = containers_dir / workspace_path.name
+    repo_dir = container_dir / 'repo'
+
+    if paths:
+        try:
+            _validate_sync_paths(paths, workspace_path)
+        except click.ClickException as e:
+            click.secho(f"Error: {e.format_message()}", fg='red')
+            sys.exit(1)
+
+    # Full-tree sync without --dry-run requires confirmation
+    if not paths and not dry_run and not yes:
+        if not click.confirm(
+            f"Sync all files from {workspace_path.name} to container repo?",
+            default=False,
+        ):
+            click.echo("Aborted")
+            return
+
+    project_config = ProjectConfig.load(workspace_path)
+    extra_excludes = (project_config.sync_exclude or []) if project_config else []
+
+    cmd = _build_rsync_cmd(
+        src=workspace_path,
+        dst=repo_dir,
+        paths=paths,
+        delete=delete,
+        dry_run=dry_run,
+        extra_excludes=extra_excludes,
+    )
+
+    if dry_run:
+        click.echo("Dry run — showing what would be synced:")
+    else:
+        click.echo(f"Pushing from {workspace_path.name} to container...")
+
+    result = subprocess.run(cmd, capture_output=False, text=True)
+    if result.returncode != 0:
+        click.secho("rsync failed", fg='red')
+        sys.exit(result.returncode)
+
+    if not dry_run:
+        click.echo("Done.")
 
 
 if __name__ == '__main__':

@@ -3,8 +3,11 @@ set -e
 
 echo "Starting vibedom VM..."
 
-# Initialize git repository from workspace
-if [ -d /mnt/workspace/.git ]; then
+# Initialize git repository from workspace (skip if already initialized)
+if [ -d /work/repo/.git ]; then
+    echo "Existing repo found at /work/repo, skipping clone"
+    cd /work/repo
+elif [ -d /mnt/workspace/.git ]; then
     echo "Cloning git repository from workspace..."
     git clone /mnt/workspace/.git /work/repo
     cd /work/repo
@@ -32,11 +35,11 @@ else
     rsync -a --exclude='.git' /mnt/workspace/ /work/repo/ || true
     cd /work/repo
     git init
-    
+
     # Set git identity for agent commits
     git config user.name "Vibedom Agent"
     git config user.email "agent@vibedom.local"
-    
+
     git add .
     git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
 fi
@@ -60,10 +63,14 @@ else
 fi
 
 # Start SSH agent with deploy key at a fixed socket path so exec sessions can use it
-if [ -f /mnt/config/keys/id_ed25519_vibedom ]; then
+# Skip if socket already exists (container restart)
+if [ -f /mnt/config/keys/id_ed25519_vibedom ] && [ ! -S /tmp/ssh-agent.sock ]; then
     ssh-agent -a /tmp/ssh-agent.sock > /dev/null
     SSH_AUTH_SOCK=/tmp/ssh-agent.sock ssh-add /mnt/config/keys/id_ed25519_vibedom 2>/dev/null || true
     echo "SSH_AUTH_SOCK=/tmp/ssh-agent.sock" >> /etc/environment
+    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+elif [ -S /tmp/ssh-agent.sock ]; then
+    echo "SSH agent already running"
     export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
 fi
 

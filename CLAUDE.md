@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete. Phase 2 DLP mostly complete (real-time scrubbing, audit logging). Usability features complete (Claude Code persistence, whitelist reload, apple/container support).
+**Current Status**: Phase 1 complete. Phase 2 DLP complete (real-time scrubbing, audit logging). Persistent container workflow complete (iterative development with bidirectional sync).
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -15,57 +15,66 @@
 1. **VM Isolation** (`lib/vibedom/vm.py`)
     - Supports both apple/container (preferred) and Docker (fallback)
     - Read-only workspace mount at `/mnt/workspace`
-    - Git repository at `/work/repo` (mounted from session)
+    - Agent workspace at `/work/repo` (bind-mounted from host — persists for persistent containers)
     - Claude Code CLI pre-installed with persistent config volume
     - Health check polling for VM readiness
+    - `exists()` / `is_running()` / `pause()` / `restart()` for persistent container lifecycle
 
-2. **Network Control** (`lib/vibedom/proxy.py`, `lib/vibedom/container/mitmproxy_addon.py`)
+2. **Container State** (`lib/vibedom/container_state.py`)
+   - `ContainerState` dataclass persisted as `~/.vibedom/containers/{name}/container.json`
+   - Tracks workspace, runtime, proxy PID/port, status (running/stopped)
+   - `ContainerRegistry` for discovering/looking up containers by workspace name or path
+
+3. **Network Control** (`lib/vibedom/proxy.py`, `lib/vibedom/container/mitmproxy_addon.py`)
    - ProxyManager starts mitmproxy as a **host process** (not inside the container)
-   - One process per session on an OS-assigned port (no hardcoded ports)
-   - Port and PID stored in session state.json for whitelist reload
+   - One process per container/session on an OS-assigned port (no hardcoded ports)
+   - Port and PID stored in `container.json` or `state.json` for whitelist reload
+   - Proxy auto-restarts on `vibedom up`/`vibedom shell` if PID is dead
    - Container receives `HTTP_PROXY=http://host.docker.internal:<port>` and CA cert via `/mnt/config/mitmproxy/`
    - Domain whitelist enforcement with subdomain support
-   - Whitelist reload via `os.kill(proxy_pid, SIGHUP)` — no docker exec needed
-   - Supports both HTTP and HTTPS traffic
    - DLP scrubber for secret and PII detection in outbound HTTP traffic
-   - Logs all requests to session directory (`network.jsonl`)
+   - Logs all requests to `network.jsonl`
 
-3. **Secret Detection** (`lib/vibedom/gitleaks.py`)
+4. **Secret Detection** (`lib/vibedom/gitleaks.py`)
    - Pre-flight Gitleaks scan before VM starts
    - Risk categorization (critical vs warnings)
    - Interactive review UI for findings
 
-4. **Session Management** (`lib/vibedom/session.py`)
+5. **Session Management** (`lib/vibedom/session.py`)
    - Structured logging (JSONL for network, text for events)
    - Session directories: `~/.vibedom/logs/session-YYYYMMDD-HHMMSS-microseconds/`
-   - Tracks VM lifecycle, network requests, user decisions
+   - Retained for ephemeral session workflow
 
-5. **CLI** (`lib/vibedom/cli.py`)
-   - `vibedom run <workspace>` - Start sandbox
-   - `vibedom stop <workspace>` - Stop specific sandbox
-   - `vibedom stop` - Stop all vibedom containers
-   - `vibedom init` - First-time setup (SSH keys, whitelist)
-   - `vibedom reload-whitelist <workspace>` - Reload whitelist without restart
-   - `vibedom review <workspace>` - Review changes from session bundle
-   - `vibedom merge <workspace>` - Merge changes from session bundle
-   - `vibedom shell <workspace>` - Open shell in container
+6. **CLI** (`lib/vibedom/cli.py`)
+   - **Persistent containers**: `up`, `down`, `destroy`, `status`, `shell`, `pull`, `push`
+   - **Ephemeral sessions**: `run`, `stop`, `attach`, `review`, `merge`
+   - **Shared**: `init`, `reload-whitelist`, `list`, `rm`, `prune`, `housekeeping`, `proxy-restart`
 
 ### Key Design Decisions
 
-**Git Bundle Workflow**: Git-native approach for agent changes (not diff-based)
+**Two container models**: Persistent (recommended) and ephemeral (retained for compatibility)
+- Persistent: `vibedom up/down` — container survives across tasks, repo bind-mounted from `~/.vibedom/containers/{name}/repo/`, sync via rsync
+- Ephemeral: `vibedom run/stop` — fresh container per task, repo cloned on start, changes extracted as git bundle on stop
+
+**Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists
+- Enables container restart without re-cloning
+- SSH agent socket check prevents duplicate agents on restart
+
+**Host-side rsync for sync**: `pull`/`push` rsync directly between host paths
+- Container repo is a bind mount, so no `docker exec` needed
+- `.gitignore` rules applied via `--filter=':- .gitignore'`
+- `sync_exclude:` in `vibedom.yml` for project-specific additional excludes
+- Additive by default (no `--delete`); destructive mode opt-in
+
+**Git Bundle Workflow** (ephemeral sessions): Git-native approach for agent changes
 - Rationale: Cleaner code review, better GitLab integration, preserves commit history
 - Implementation: Container clones workspace, creates git bundle at session end
-- Benefits: Users can review/merge using standard git operations
-
-**Container Initialization**: Clone workspace or init fresh repo
-- Git workspaces: Clone from host `.git`, checkout current branch
-- Non-git workspaces: Initialize fresh repo with snapshot commit
-- Implementation: Git clone/init in `lib/vibedom/container/startup.sh`
 
 **Explicit Proxy**: HTTP_PROXY/HTTPS_PROXY environment variables
 - Rationale: Works with both HTTP and HTTPS
 - Implementation: Environment variables set at container level, mitmproxy in regular mode
-- Compatibility: 95%+ of modern tools respect proxy environment variables
+- Proxy port is baked into the container env at creation — restart must use same port
+- Proxy auto-restart on `vibedom up` / `vibedom shell` if PID is dead
 
 **Deploy Keys**: Unique SSH key per machine
 - Rationale: Avoid exposing personal credentials to VM
@@ -73,20 +82,37 @@
 
 ## Development Workflow
 
-### Git Bundle Workflow
+### Persistent Container Workflow (Primary)
+
+**Setup (once per project):**
+- Add `vibedom.yml` with `base_image`, `network`, `setup` commands, `sync_exclude`
+- `vibedom up ~/projects/myapp` — creates container, runs setup commands
+
+**Iterative development:**
+```
+vibedom shell myapp          # open shell, run agent inside
+vibedom pull myapp src/      # pull agent's changes to host
+# review, test, amend locally
+vibedom push myapp src/      # push amendments back to container
+# repeat
+```
+
+**Between tasks:**
+- `vibedom down myapp` — stops container, environment preserved
+- `vibedom up myapp` — restarts, no re-clone, proxy auto-restarts
+
+### Ephemeral Session Workflow (Legacy / Isolated Tasks)
 
 **Container Initialization:**
 - Git workspaces: Cloned from host, checkout current branch
 - Non-git workspaces: Fresh git init with snapshot commit
-- Agent works in `/work/repo` (mounted to `~/.vibedom/sessions/session-xyz/repo`)
+- Agent works in `/work/repo` (mounted to `~/.vibedom/logs/session-xyz/repo`)
 
 **During Session:**
 - Agent commits normally to isolated repo
-- User can fetch from live repo for mid-session testing
-- `git remote add vibedom-live ~/.vibedom/sessions/session-xyz/repo`
 
 **After Session:**
-- Git bundle created at `~/.vibedom/sessions/session-xyz/repo.bundle`
+- Git bundle created at `~/.vibedom/logs/session-xyz/repo.bundle`
 - User adds bundle as remote, reviews commits
 - User merges into feature branch (with or without squash)
 - User pushes feature branch for GitLab MR
@@ -133,17 +159,19 @@ All features follow TDD:
 
 ## Known Limitations
 
-### Git Bundle Workflow
+### Persistent Container Sync
+
+**Current Implementation:**
+- Sync is manual — user runs `vibedom pull`/`vibedom push` explicitly
+- No automatic file watching or live sync
+- Full-tree sync requires confirmation (path-specific sync does not)
+
+### Git Bundle Workflow (Ephemeral Sessions)
 
 **Current Implementation:**
 - Agent works on same branch as user's current branch
 - Bundle contains all refs from session
 - User decides to keep commits or squash during merge
-
-**Phase 2 Enhancements:**
-- Helper commands: `vibedom review`, `vibedom merge`
-- Automatic session cleanup with retention policies
-- GitLab integration for MR creation
 
 ### Proxy Mode
 
@@ -200,7 +228,16 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 # Build VM image
 vibedom init  # builds image on first run
 
-# Test basic workflow
+# Test persistent container workflow
+vibedom up ~/projects/test-workspace
+vibedom status
+vibedom push test-workspace src/          # push a specific path
+vibedom pull test-workspace src/ --dry-run
+vibedom down test-workspace
+vibedom up ~/projects/test-workspace      # should restart without re-cloning
+vibedom destroy test-workspace --force
+
+# Test ephemeral session workflow
 vibedom run ~/projects/test-workspace
 
 # Verify inside container
@@ -210,8 +247,8 @@ docker exec vibedom-<workspace> ls /work
 # Test HTTP/HTTPS whitelisting
 docker exec vibedom-<workspace> curl https://pypi.org/simple/
 
-# Check logs
-cat ~/.vibedom/logs/session-*/network.jsonl
+# Check logs (persistent)
+cat ~/.vibedom/containers/test-workspace/network.jsonl
 
 # Stop
 vibedom stop ~/projects/test-workspace
@@ -221,23 +258,26 @@ vibedom stop ~/projects/test-workspace
 
 ```
 vibedom/
-├── lib/vibedom/          # Core Python package
-│   ├── cli.py           # Click CLI commands
-│   ├── vm.py            # VM lifecycle management
-│   ├── session.py       # Session logging
-│   ├── gitleaks.py      # Secret scanning
-│   ├── review_ui.py     # Interactive review
-│   ├── ssh_keys.py      # Deploy key management
-│   ├── whitelist.py     # Domain whitelist logic
-│   ├── config/          # Default configs
-│   └── container/       # Container image files (Dockerfile, startup.sh, proxy addon)
-├── tests/               # Test suite
-├── docs/                # Documentation
-│   ├── ARCHITECTURE.md  # System architecture
-│   ├── USAGE.md         # User guide
-│   ├── TESTING.md       # Test documentation
-│   └── technical-debt.md # Deferred improvements
-└── pyproject.toml       # Package configuration
+├── lib/vibedom/              # Core Python package
+│   ├── cli.py               # Click CLI commands
+│   ├── vm.py                # VM lifecycle management
+│   ├── container_state.py   # Persistent container state (ContainerState, ContainerRegistry)
+│   ├── session.py           # Ephemeral session logging
+│   ├── project_config.py    # vibedom.yml parsing
+│   ├── gitleaks.py          # Secret scanning
+│   ├── review_ui.py         # Interactive review
+│   ├── ssh_keys.py          # Deploy key management
+│   ├── whitelist.py         # Domain whitelist logic
+│   ├── proxy.py             # Host-side mitmproxy management
+│   ├── config/              # Default configs (gitleaks.toml, trusted_domains.txt)
+│   └── container/           # Container image files (Dockerfile.*, startup.sh, mitmproxy_addon.py)
+├── tests/                   # Test suite
+├── docs/                    # Documentation
+│   ├── ARCHITECTURE.md      # System architecture
+│   ├── USAGE.md             # User guide
+│   ├── TESTING.md           # Test documentation
+│   └── technical-debt.md    # Deferred improvements
+└── pyproject.toml           # Package configuration
 ```
 
 ## Common Commands
@@ -264,30 +304,26 @@ ruff check lib/ tests/
 # First-time setup
 vibedom init
 
-# Run sandbox
-vibedom run ~/projects/myapp
+# --- Persistent container workflow ---
+vibedom up ~/projects/myapp          # start (or restart) container
+vibedom shell myapp                  # open shell inside container
+vibedom pull myapp src/              # sync container -> host (specific path)
+vibedom push myapp src/              # sync host -> container (specific path)
+vibedom pull myapp                   # sync all (respects .gitignore, asks confirmation)
+vibedom status                       # show all container states
+vibedom down myapp                   # stop (preserves filesystem)
+vibedom destroy myapp                # remove container + data
 
-# Stop sandbox
-vibedom stop ~/projects/myapp
+# --- Ephemeral session workflow ---
+vibedom run ~/projects/myapp         # start isolated session
+vibedom attach                       # shell into session
+vibedom stop                         # stop + create git bundle
+vibedom review myapp-happy-turing    # inspect changes
+vibedom merge myapp-happy-turing     # merge changes
 
-# Stop all
-vibedom stop
-
-# Reload whitelist
-vibedom reload-whitelist ~/projects/myapp
-
-# Review session changes
-vibedom review ~/projects/myapp
-
-# Merge session changes
-vibedom merge ~/projects/myapp
-
-# Shell into container
-vibedom shell ~/projects/myapp
-
-# View logs
-ls ~/.vibedom/logs/
-cat ~/.vibedom/logs/session-*/session.log
+# --- Shared ---
+vibedom reload-whitelist             # hot-reload domain whitelist
+vibedom list                         # list all sessions
 ```
 
 ### Debugging
@@ -295,37 +331,44 @@ cat ~/.vibedom/logs/session-*/session.log
 ```bash
 # Check container status
 docker ps -a | grep vibedom
+vibedom status
 
 # View container logs
 docker logs vibedom-<workspace>
 
-# Exec into container
-docker exec -it vibedom-<workspace> /bin/bash
+# Open shell in container
+vibedom shell myapp
 
-# Check mitmproxy logs
-docker exec vibedom-<workspace> cat /var/log/vibedom/mitmproxy.log
+# Check proxy health
+cat ~/.vibedom/containers/myapp/container.json   # shows proxy_pid / proxy_port
 
-# Check network logs
-docker exec vibedom-<workspace> cat /var/log/vibedom/network.jsonl
+# Check network logs (persistent containers)
+cat ~/.vibedom/containers/myapp/network.jsonl
+
+# Check network logs (ephemeral sessions)
+cat ~/.vibedom/logs/session-*/network.jsonl
 ```
 
 ## Future Roadmap
 
-### Phase 2: DLP and Monitoring ✅ (Mostly Complete)
+### Phase 2: DLP and Monitoring ✅ (Complete)
 
-**Completed:**
 - ✅ **DLP scrubbing**: Real-time secret and PII scrubbing in HTTP traffic
 - ✅ **Shared patterns**: gitleaks.toml serves pre-flight scan + runtime DLP
 - ✅ **Audit logging**: Scrubbed findings logged to network.jsonl
 
-**Remaining:**
-- ❌ **High-severity alerting**: Real-time notifications for critical findings
-- ❌ **Helper commands**: `vibedom review`, `vibedom merge` for git bundle workflow
+### Phase 2b: Persistent Containers ✅ (Complete)
+
+- ✅ **Persistent containers**: `vibedom up/down/destroy` — container survives across tasks
+- ✅ **Bidirectional sync**: `vibedom push/pull` with `.gitignore`-aware rsync
+- ✅ **Setup scripts**: `setup:` in `vibedom.yml` for one-time environment setup
+- ✅ **Proxy auto-restart**: proxy health checked and restarted on `up`/`shell`
 
 ### Phase 3: Production Hardening
 
+- **High-severity alerting**: Real-time notifications for critical DLP findings
 - **Log rotation**: Implement size limits and rotation policies
-- **Session cleanup**: Automatic cleanup with retention policies
+- **Session/container cleanup**: Automatic cleanup with retention policies
 - **Multi-tenant support**: Workspace isolation for multiple users
 
 ## Contributing Guidelines
@@ -373,6 +416,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 - **Deploy keys**: Unique SSH key per machine (not personal credentials)
 - **DLP scrubbing**: Real-time secret/PII detection and scrubbing in HTTP traffic
 - **Pre-flight scanning**: Gitleaks scan before VM starts
+- **Sync path validation**: `pull`/`push` reject absolute paths and `../` traversal
 
 ### Known Security Limitations
 
@@ -398,6 +442,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-02-17 (Phase 2 DLP complete)
-**Status**: Phase 1 complete, Phase 2 DLP complete (alerting pending), usability features complete
+**Last Updated**: 2026-04-14 (Persistent containers + bidirectional sync complete)
+**Status**: Phase 1 complete, Phase 2 DLP complete, Phase 2b persistent containers complete
 **Next Milestone**: High-severity alerting OR Phase 3 production hardening
