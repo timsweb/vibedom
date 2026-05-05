@@ -792,6 +792,7 @@ def up(workspace, runtime):
         network=project_config.network if project_config else None,
         base_image=project_config.base_image if project_config else None,
         host_aliases=project_config.host_aliases if project_config else None,
+        memory=project_config.memory if project_config else None,
     )
 
     if vm.is_running():

@@ -18,7 +18,8 @@ class VMManager:
                  runtime: Optional[str] = None, network: Optional[str] = None,
                  base_image: Optional[str] = None,
                  host_aliases: Optional[dict] = None,
-                 container_dir: Optional[Path] = None):
+                 container_dir: Optional[Path] = None,
+                 memory: Optional[str] = None):
         """Initialize VM manager.
 
         Args:
@@ -32,6 +33,8 @@ class VMManager:
                 Use 'host' as value to resolve to the host machine IP.
             container_dir: Path for persistent container state (repo bind mount comes from here).
                 Takes precedence over session_dir for the repo mount.
+            memory: Memory limit for the container (e.g. '4g', '2048m'). Defaults to 4g on
+                apple/container (whose default 1GB is insufficient for Claude Code).
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
@@ -39,6 +42,7 @@ class VMManager:
         self.container_dir = container_dir.resolve() if container_dir else None
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
+        self.memory = memory
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
@@ -229,11 +233,16 @@ class VMManager:
         # CA bundle path inside the container (set by update-ca-certificates)
         ca_bundle = '/etc/ssl/certs/ca-certificates.crt'
 
+        # apple/container defaults to 1GB which OOM-kills Claude Code; use 4g unless overridden
+        memory_limit = self.memory or ('4g' if self.runtime == 'apple' else None)
+
         cmd = [
             self.runtime_cmd, 'run',
             detach_flag,
             '--name', self.container_name,
         ]
+        if memory_limit:
+            cmd += ['--memory', memory_limit]
         # Docker on Linux needs --add-host to resolve host.docker.internal;
         # apple/container doesn't support the flag (we use the gateway IP directly instead).
         if self.runtime != 'apple':

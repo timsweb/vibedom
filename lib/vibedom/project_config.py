@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-KNOWN_FIELDS = {'base_image', 'network', 'host_aliases', 'setup', 'sync_exclude'}
+KNOWN_FIELDS = {'base_image', 'network', 'host_aliases', 'setup', 'sync_exclude', 'memory'}
 
 
 @dataclass
@@ -17,6 +17,7 @@ class ProjectConfig:
     host_aliases: Optional[dict] = None
     setup: Optional[list] = None
     sync_exclude: Optional[list] = None
+    memory: Optional[str] = None
 
     @classmethod
     def load(cls, workspace: Path) -> Optional['ProjectConfig']:
@@ -38,4 +39,5 @@ class ProjectConfig:
             host_aliases=data.get('host_aliases'),
             setup=data.get('setup'),
             sync_exclude=data.get('sync_exclude'),
+            memory=data.get('memory'),
         )
