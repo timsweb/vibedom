@@ -1037,7 +1037,7 @@ def shell_cmd(workspace):
 
     runtime_cmd = 'container' if container_state.runtime == 'apple' else 'docker'
     cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
-           container_state.container_name, 'bash']
+           container_state.container_name, 'bash', '--login']
     try:
         subprocess.run(cmd)
     except FileNotFoundError:
