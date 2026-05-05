@@ -232,30 +232,41 @@ def stop(session_id):
 
 @main.command('list')
 def list_sessions():
-    """List all sessions with their status."""
+    """List all sessions and persistent containers with their status."""
+    containers = ContainerRegistry().all()
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    if not logs_dir.exists():
+    sessions = SessionRegistry(logs_dir).all() if logs_dir.exists() else []
+
+    if not containers and not sessions:
         click.echo("No sessions found")
         return
 
-    registry = SessionRegistry(logs_dir)
-    sessions = registry.all()
+    if containers:
+        click.echo(f"{'WORKSPACE':<25} {'CONTAINER':<35} {'STATUS':<12} {'PROXY'}")
+        click.echo('-' * 85)
+        for c in containers:
+            workspace_name = Path(c.workspace).name
+            proxy_info = f"port {c.proxy_port} (PID {c.proxy_pid})" if c.proxy_port else "none"
+            click.echo(
+                f"{workspace_name:<25} "
+                f"{c.container_name:<35} "
+                f"{c.status:<12} "
+                f"{proxy_info}"
+            )
 
-    if not sessions:
-        click.echo("No sessions found")
-        return
-
-    # Header
-    click.echo(f"{'ID':<40} {'WORKSPACE':<20} {'STATUS':<12} {'STARTED'}")
-    click.echo('-' * 85)
-    for session in sessions:
-        workspace_name = Path(session.state.workspace).name
-        click.echo(
-            f"{session.state.session_id:<40} "
-            f"{workspace_name:<20} "
-            f"{session.state.status:<12} "
-            f"{session.age_str}"
-        )
+    if sessions:
+        if containers:
+            click.echo()
+        click.echo(f"{'ID':<40} {'WORKSPACE':<20} {'STATUS':<12} {'STARTED'}")
+        click.echo('-' * 85)
+        for session in sessions:
+            workspace_name = Path(session.state.workspace).name
+            click.echo(
+                f"{session.state.session_id:<40} "
+                f"{workspace_name:<20} "
+                f"{session.state.status:<12} "
+                f"{session.age_str}"
+            )
 
 
 @main.command('attach')
@@ -553,21 +564,22 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"""
 
 @main.command('reload-whitelist')
 def reload_whitelist() -> None:
-    """Reload domain whitelist for all running sessions.
+    """Reload domain whitelist for all running sessions and containers.
 
     After editing ~/.vibedom/config/trusted_domains.txt, use this command
     to apply the changes without restarting containers.
     """
     logs_dir = Path.home() / '.vibedom' / 'logs'
-    registry = SessionRegistry(logs_dir)
-    running = registry.running()
+    running_sessions = SessionRegistry(logs_dir).running() if logs_dir.exists() else []
+    running_containers = [c for c in ContainerRegistry().all() if c.status == 'running']
 
-    if not running:
+    if not running_sessions and not running_containers:
         click.echo("No running sessions found")
         return
 
     failed = 0
-    for session in running:
+
+    for session in running_sessions:
         if not session.state.proxy_pid:
             click.secho(
                 f"⚠️  No proxy PID for {session.display_name} "
@@ -584,6 +596,22 @@ def reload_whitelist() -> None:
                 f"❌ Proxy process not found for {session.display_name}",
                 fg='red'
             )
+            failed += 1
+
+    for container in running_containers:
+        name = Path(container.workspace).name
+        if not container.proxy_pid:
+            click.secho(
+                f"⚠️  No proxy PID for {name} (started with older vibedom?)",
+                fg='yellow'
+            )
+            failed += 1
+            continue
+        try:
+            os.kill(container.proxy_pid, signal_module.SIGHUP)
+            click.echo(f"✅ Reloaded whitelist for {name}")
+        except ProcessLookupError:
+            click.secho(f"❌ Proxy process not found for {name}", fg='red')
             failed += 1
 
     if failed:
