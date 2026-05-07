@@ -25,6 +25,10 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV USE_BUILTIN_RIPGREP=0
 ENV PATH="/root/.local/bin:$PATH"
 
+# Ensure /root/.local/bin is in PATH for login shells (bash --login sources /etc/profile
+# which resets PATH, dropping the ENV above)
+RUN echo 'export PATH="/root/.local/bin:$PATH"' > /etc/profile.d/local-bin.sh
+
 # Create directories
 RUN mkdir -p /mnt/workspace /work /mnt/config /var/log/vibedom
 
