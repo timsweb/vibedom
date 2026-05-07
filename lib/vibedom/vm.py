@@ -304,8 +304,14 @@ class VMManager:
                     resolved = proxy_host if ip == 'host' else ip
                     cmd += ['--add-host', f'{hostname}:{resolved}']
 
-        # Claude/OpenCode config - shared persistent volume across all workspaces
-        cmd += ['-v', 'vibedom-claude-config:/root/.claude']
+        # Claude/OpenCode config - shared persistent volume across all workspaces.
+        # apple/container doesn't support named volumes, so use a bind mount instead.
+        if self.runtime == 'apple':
+            claude_config_dir = Path.home() / '.vibedom' / 'claude-config'
+            claude_config_dir.mkdir(parents=True, exist_ok=True)
+            cmd += ['-v', f'{claude_config_dir}:/root/.claude']
+        else:
+            cmd += ['-v', 'vibedom-claude-config:/root/.claude']
 
         cmd.append(image)
 
