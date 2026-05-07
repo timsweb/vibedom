@@ -187,6 +187,13 @@ def stop(session_id):
     logs_dir = Path.home() / '.vibedom' / 'logs'
     registry = SessionRegistry(logs_dir)
 
+    if session_id and ContainerRegistry().find(session_id):
+        click.secho(
+            f"'{session_id}' is a persistent container — use 'vibedom down {session_id}' to stop it.",
+            fg='yellow'
+        )
+        sys.exit(1)
+
     session = registry.resolve(session_id, running_only=(session_id is None))
 
     if session.state.status != 'running':
