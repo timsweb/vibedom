@@ -53,7 +53,7 @@
 ### Key Design Decisions
 
 **Two container models**: Persistent (recommended) and ephemeral (retained for compatibility)
-- Persistent: `vibedom up/down` — container survives across tasks, repo bind-mounted from `~/.vibedom/containers/{name}/repo/`, sync via rsync
+- Persistent: `vibedom up/down` — container survives across tasks (including reboots — stopped, not removed), repo bind-mounted from `~/.vibedom/containers/{name}/repo/`, sync via rsync
 - Ephemeral: `vibedom run/stop` — fresh container per task, repo cloned on start, changes extracted as git bundle on stop
 
 **Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists
@@ -65,6 +65,7 @@
 - `.gitignore` rules applied via `--filter=':- .gitignore'`
 - `sync_exclude:` in `vibedom.yml` for project-specific additional excludes
 - Additive by default (no `--delete`); destructive mode opt-in
+- Path-specific sync uses `--relative` with rsync's `/.` anchor — directory structure preserved in destination
 
 **Git Bundle Workflow** (ephemeral sessions): Git-native approach for agent changes
 - Rationale: Cleaner code review, better GitLab integration, preserves commit history

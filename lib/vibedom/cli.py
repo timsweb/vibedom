@@ -254,10 +254,11 @@ def list_sessions():
         for c in containers:
             workspace_name = Path(c.workspace).name
             proxy_info = f"port {c.proxy_port} (PID {c.proxy_pid})" if c.proxy_port else "none"
+            live_status = _live_container_status(c)
             click.echo(
                 f"{workspace_name:<25} "
                 f"{c.container_name:<35} "
-                f"{c.status:<12} "
+                f"{live_status:<12} "
                 f"{proxy_info}"
             )
 
@@ -750,6 +751,33 @@ def housekeeping(days: int, force: bool, dry_run: bool) -> None:
     _execute_deletions(to_delete, skipped, force, dry_run)
 
 
+def _live_container_status(c: ContainerState) -> str:
+    """Query the container runtime for the actual current status."""
+    if c.runtime == 'apple':
+        result = subprocess.run(
+            ['container', 'inspect', c.container_name],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return 'gone'
+        try:
+            import json as _json
+            data = _json.loads(result.stdout)
+            if isinstance(data, list):
+                return data[0].get('status', 'unknown') if data else 'gone'
+            return data.get('status', 'unknown')
+        except (ValueError, KeyError, IndexError):
+            return 'unknown'
+    else:
+        result = subprocess.run(
+            ['docker', 'inspect', '--format', '{{.State.Status}}', c.container_name],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return 'gone'
+        return result.stdout.strip() or 'unknown'
+
+
 def _proxy_is_alive(pid: Optional[int]) -> bool:
     """Check whether a proxy process is still running.
 
@@ -855,6 +883,17 @@ def up(workspace, runtime):
             click.secho(f"Error: {e}", fg='red')
             sys.exit(1)
         container_state.mark_running(proxy.port, proxy.pid, container_dir)
+    elif container_state is not None:
+        # Container no longer exists in the runtime but the state file and repo are intact.
+        # Repo data is safe in the bind-mount directory — just recreate the container.
+        click.echo(f"Container '{vm.container_name}' not found. Recreating with existing repo...")
+        try:
+            vm.start()
+        except RuntimeError as e:
+            click.secho(f"Error: {e}", fg='red')
+            sys.exit(1)
+        container_state.mark_running(vm._proxy.port, vm._proxy.pid, container_dir)
+
     else:
         # First-time creation
         click.echo("Scanning for secrets...")
@@ -1030,10 +1069,11 @@ def status(workspace):
             proxy_info += f" (PID {c.proxy_pid})"
         else:
             proxy_info += " (dead)" if c.proxy_pid else ""
+        live_status = _live_container_status(c)
         click.echo(
             f"{workspace_name:<25} "
             f"{c.container_name:<35} "
-            f"{c.status:<10} "
+            f"{live_status:<10} "
             f"{proxy_info}"
         )
 
@@ -1154,13 +1194,13 @@ def _build_rsync_cmd(
         cmd.append('--delete')
 
     if paths:
-        # Sync only specific paths.  rsync expects: rsync [opts] src1 src2 ... dst
-        # All source paths are listed first, then the single destination.
+        # --relative with /./  preserves the path structure in the destination.
+        # e.g. /src_root/./sub/dir/file.py lands at /dst/sub/dir/file.py
+        cmd.append('--relative')
         src_resolved = src.resolve()
         dst_resolved = dst.resolve()
         for raw in paths:
-            resolved_src = (src_resolved / raw).resolve()
-            cmd.append(str(resolved_src))
+            cmd.append(f'{src_resolved}/./{raw}')
         cmd.append(str(dst_resolved))
     else:
         cmd.append(f'{src}/')

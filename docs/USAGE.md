@@ -85,6 +85,8 @@ vibedom up ~/projects/myapp
 
 - **First run**: scans for secrets, builds image, clones repo into container
 - **After `vibedom down`**: restarts the existing container (no re-clone, environment preserved)
+- **After a reboot**: container is in a stopped state — `vibedom up` restarts it, same as after `vibedom down`
+- **Container missing** (e.g. manually deleted): recreates using existing repo data — no secret scan, no re-clone, no setup re-run
 - **Already running**: checks proxy health and prints status
 
 ### Project Setup (vibedom.yml)
@@ -119,8 +121,9 @@ Changes made by the agent inside the container don't automatically appear on the
 # Pull agent's changes → your workspace
 vibedom pull myapp
 
-# Pull only specific paths
+# Pull only specific paths (directory structure is preserved)
 vibedom pull myapp src/ app/Http/
+vibedom pull myapp src/Controllers/UserController.php
 
 # Push your local edits → container
 vibedom push myapp
@@ -132,6 +135,8 @@ vibedom push myapp src/Controllers/
 vibedom pull myapp --dry-run
 vibedom push myapp --dry-run
 ```
+
+When you specify paths, the directory structure is preserved in the destination. For example, `vibedom pull myapp src/Controllers/Foo.php` lands at `src/Controllers/Foo.php` in your workspace — not at `Foo.php`.
 
 **What gets excluded automatically:**
 - Everything in `.gitignore` (vendor/, node_modules/, .env, build artifacts, etc.)
@@ -159,9 +164,10 @@ This opens a bash shell at `/work/repo` inside the container, where Claude Code 
 ```bash
 vibedom status          # all containers
 vibedom status myapp    # specific project
+vibedom list            # containers and ephemeral sessions together
 ```
 
-Output shows container name, status (running/stopped), and proxy health.
+Status is queried live from the container runtime — not from cached state on disk. After a reboot, a container that was running when you shut down will show as `stopped` rather than the stale `running` value stored on disk.
 
 ### Stopping a Container
 
@@ -334,6 +340,10 @@ Rebuild the image:
 ```bash
 vibedom init
 ```
+
+### Container shows wrong status after reboot (apple/container)
+
+apple/container containers survive reboots in a stopped state. Run `vibedom up <workspace>` as normal — it restarts the container without re-cloning or re-running setup. If networking seems broken inside the container after a reboot, you may need to run `container system dns create` on the host to restore DNS (a known apple/container issue).
 
 ### Proxy died after terminal close
 

@@ -28,9 +28,12 @@ Vibedom supports two container models:
 **Persistent containers** (`vibedom up/down/destroy`):
 - One long-lived container per project, named `vibedom-{workspace-name}`
 - State stored at `~/.vibedom/containers/{name}/container.json`
-- Repo bind-mounted from `~/.vibedom/containers/{name}/repo/` (survives stop/restart)
+- Repo bind-mounted from `~/.vibedom/containers/{name}/repo/` (survives stop/restart/reboot)
 - `startup.sh` is idempotent — skips git clone if repo already exists
 - One-time setup commands from `vibedom.yml` run on first creation only
+- `vibedom up` distinguishes three cases: already running (no-op), stopped/rebooted (restart), truly gone (recreate without re-scan — repo data is safe in bind mount)
+- `vibedom status` / `vibedom list` query the runtime live, not disk state
+- apple/container `inspect` has no `--format` flag; vibedom parses the JSON output directly
 
 **Ephemeral sessions** (`vibedom run/stop`):
 - New container per task, destroyed on stop
@@ -58,7 +61,7 @@ Vibedom supports two container models:
 - `.gitignore` rules applied automatically via `--filter=':- .gitignore'`
 - Extra excludes configurable via `sync_exclude:` in `vibedom.yml`
 - Additive by default; `--delete` opt-in for destructive sync
-- Path-specific sync supported: `vibedom pull myapp src/`
+- Path-specific sync: `vibedom pull myapp src/` — uses `--relative` with rsync's `/.` anchor so directory structure is preserved in the destination (e.g. `src/Foo.php` lands at `src/Foo.php`, not `Foo.php`)
 
 ### Security Layer
 - Gitleaks pre-flight scanning (secrets in workspace files)
@@ -101,22 +104,24 @@ Vibedom supports two container models:
 ```
 vibedom up ~/project
   ↓
-Pre-flight (first run only): Gitleaks scan → user reviews findings
+Already running? → check proxy health, print status, exit
   ↓
-Container start: mount workspace (read-only) + repo dir (persistent bind mount)
+Stopped or rebooted (vm.exists)? → restart container + proxy on same port
   ↓
-Proxy start: mitmproxy on host, port saved to container.json
+Truly gone (no state file)? → first-time creation:
+  Gitleaks scan → user reviews findings
+  → container start + proxy start, port saved to container.json
+  → run setup: commands from vibedom.yml
   ↓
-Setup (first run only): run setup: commands from vibedom.yml
+Truly gone but state file exists (e.g. manually deleted)?
+  → recreate container, proxy on new port — repo data safe in bind mount, setup not re-run
   ↓
 Agent: works in /work/repo, network filtered and DLP-scrubbed
   ↓
-vibedom pull myapp: rsync repo/ → workspace (specific paths or full tree)
-vibedom push myapp: rsync workspace → repo/ (specific paths or full tree)
+vibedom pull myapp: rsync repo/ → workspace (paths preserve directory structure)
+vibedom push myapp: rsync workspace → repo/ (paths preserve directory structure)
   ↓
 vibedom down: container stopped (filesystem preserved), proxy killed
-  ↓
-vibedom up: container restarted, proxy restarted on same port
 ```
 
 ### Ephemeral session

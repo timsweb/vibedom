@@ -143,21 +143,42 @@ class VMManager:
 
     def exists(self) -> bool:
         """Check whether the container exists (running or stopped)."""
-        result = subprocess.run(
-            [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
-            capture_output=True,
-            text=True,
-        )
+        if self.runtime == 'apple':
+            # apple/container inspect has no --format flag; returncode 0 means container exists
+            result = subprocess.run(
+                [self.runtime_cmd, 'inspect', self.container_name],
+                capture_output=True, text=True,
+            )
+        else:
+            result = subprocess.run(
+                [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
+                capture_output=True, text=True,
+            )
         return result.returncode == 0
 
     def is_running(self) -> bool:
         """Check whether the container is currently running."""
-        result = subprocess.run(
-            [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
-            capture_output=True,
-            text=True,
-        )
-        return result.returncode == 0 and result.stdout.strip() == 'running'
+        if self.runtime == 'apple':
+            # apple/container returns JSON array; status field is top-level on each element
+            result = subprocess.run(
+                [self.runtime_cmd, 'inspect', self.container_name],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                return False
+            try:
+                data = json.loads(result.stdout)
+                if isinstance(data, list):
+                    return bool(data) and data[0].get('status') == 'running'
+                return data.get('status') == 'running'
+            except (json.JSONDecodeError, KeyError, IndexError):
+                return False
+        else:
+            result = subprocess.run(
+                [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
+                capture_output=True, text=True,
+            )
+            return result.returncode == 0 and result.stdout.strip() == 'running'
 
     def pause(self) -> None:
         """Stop the container without removing it (preserves filesystem)."""
