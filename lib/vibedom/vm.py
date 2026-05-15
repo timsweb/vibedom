@@ -144,17 +144,25 @@ class VMManager:
     def exists(self) -> bool:
         """Check whether the container exists (running or stopped)."""
         if self.runtime == 'apple':
-            # apple/container inspect has no --format flag; returncode 0 means container exists
+            # apple/container inspect returns an empty array [] with exit code 0 for unknown
+            # containers, so we must check the array is non-empty, not just the returncode.
             result = subprocess.run(
                 [self.runtime_cmd, 'inspect', self.container_name],
                 capture_output=True, text=True,
             )
+            if result.returncode != 0:
+                return False
+            try:
+                data = json.loads(result.stdout)
+                return bool(data)
+            except json.JSONDecodeError:
+                return False
         else:
             result = subprocess.run(
                 [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],
                 capture_output=True, text=True,
             )
-        return result.returncode == 0
+            return result.returncode == 0
 
     def is_running(self) -> bool:
         """Check whether the container is currently running."""
