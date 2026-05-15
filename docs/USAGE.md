@@ -49,8 +49,8 @@ Add the displayed public key to your GitLab account under **Settings → SSH Key
 
 Vibedom auto-detects your container runtime:
 
-- **Docker** (default) — install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
-- **apple/container** (experimental) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container). Note: the `network:` field in `vibedom.yml` is not supported — see below for the host-port alternative.
+- **apple/container** (preferred) — hardware-isolated VMs via Virtualization.framework. Requires macOS 26+ and Apple Silicon. Install from [github.com/apple/container](https://github.com/apple/container). Note: the `network:` field in `vibedom.yml` is not supported — see below for the host-port alternative.
+- **Docker** (fallback) — install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 To force a specific runtime:
 

@@ -67,11 +67,11 @@ class VMManager:
                 raise RuntimeError("apple/container runtime requested but not found on system.")
             return 'apple', 'container'
 
-        # Auto-detect: Docker is preferred; apple/container is experimental
-        if shutil.which('docker'):
-            return 'docker', 'docker'
+        # Auto-detect: apple/container preferred (hardware VM isolation); Docker is fallback
         if shutil.which('container'):
             return 'apple', 'container'
+        if shutil.which('docker'):
+            return 'docker', 'docker'
         raise RuntimeError(
             "No container runtime found. Install Docker or apple/container (experimental, macOS 26+)."
         )
