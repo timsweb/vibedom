@@ -67,7 +67,7 @@ fi
 if [ -f /mnt/config/keys/id_ed25519_vibedom ] && [ ! -S /tmp/ssh-agent.sock ]; then
     ssh-agent -a /tmp/ssh-agent.sock > /dev/null
     SSH_AUTH_SOCK=/tmp/ssh-agent.sock ssh-add /mnt/config/keys/id_ed25519_vibedom 2>/dev/null || true
-    echo "SSH_AUTH_SOCK=/tmp/ssh-agent.sock" >> /etc/environment
+    echo "export SSH_AUTH_SOCK=/tmp/ssh-agent.sock" > /etc/profile.d/ssh-agent.sh
     export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
 elif [ -S /tmp/ssh-agent.sock ]; then
     echo "SSH agent already running"

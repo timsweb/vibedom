@@ -27,6 +27,7 @@ class Pattern:
     regex: re.Pattern
     category: str  # 'SECRET' or 'PII'
     placeholder: str
+    exemptions: list[re.Pattern] = field(default_factory=list)
 
 
 @dataclass
@@ -110,28 +111,41 @@ class DLPScrubber:
         if len(self.secret_patterns) == 0 and len(rules) > 0:
             self.warnings.append("All patterns failed to compile - no secrets will be scrubbed!")
 
+    # Email domains that are obviously fictional/test data and should not be scrubbed.
+    # Covers RFC 2606 reserved names plus common test conventions.
+    _EMAIL_EXEMPT = re.compile(
+        r'@(?:example\.(?:com|org|net|edu)|test\.(?:com|org|net)|localhost|invalid)$',
+        re.IGNORECASE,
+    )
+
     def _load_pii_patterns(self) -> None:
         """Load built-in PII detection patterns."""
         pii_defs = [
             ('email', 'Email Address',
-             r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'),
+             r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b',
+             [self._EMAIL_EXEMPT]),
             ('credit_card', 'Credit Card Number',
-             r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b'),
+             r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',
+             []),
             ('us_ssn', 'US Social Security Number',
-             r'\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b'),
+             r'\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b',
+             []),
             ('phone_us', 'US Phone Number',
-             r'\b(?:\+?1[-.\s]?)?(?:\(?[2-9]\d{2}\)?[-.\s]?)[2-9]\d{2}[-.\s]?\d{4}\b'),
+             r'\b(?:\+?1[-.\s]?)?(?:\(?[2-9]\d{2}\)?[-.\s]?)[2-9]\d{2}[-.\s]?\d{4}\b',
+             []),
             ('ipv4_private', 'Private IPv4 Address',
-             r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'),
+             r'\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b',
+             []),
         ]
 
-        for pattern_id, description, regex_str in pii_defs:
+        for pattern_id, description, regex_str, exemptions in pii_defs:
             self.pii_patterns.append(Pattern(
                 id=pattern_id,
                 description=description,
                 regex=re.compile(regex_str),
                 category='PII',
                 placeholder=f'[REDACTED_{pattern_id.upper()}]',
+                exemptions=exemptions,
             ))
 
     def scrub(self, text: str) -> ScrubResult:
@@ -159,6 +173,9 @@ class DLPScrubber:
                 else:
                     start, end = match.start(), match.end()
                     matched_text = match.group()
+
+                if any(ex.search(matched_text) for ex in pattern.exemptions):
+                    continue
 
                 finding = Finding(
                     pattern_id=pattern.id,
@@ -242,6 +259,9 @@ class DLPScrubber:
                 else:
                     start, end = match.start(), match.end()
                     matched_text = match.group()
+
+                if any(ex.search(matched_text) for ex in pattern.exemptions):
+                    continue
 
                 finding = Finding(
                     pattern_id=pattern.id,

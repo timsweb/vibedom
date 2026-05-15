@@ -261,6 +261,52 @@ def test_no_false_positive_version_numbers():
     assert not result.was_scrubbed
 
 
+def test_no_scrub_example_domain_email():
+    """RFC 2606 example domains should not be scrubbed."""
+    scrubber = make_scrubber()
+    for email in ['user@example.com', 'admin@example.org', 'test@example.net']:
+        result = scrubber.scrub(f"email = '{email}'")
+        assert email in result.text, f"{email} should not be scrubbed"
+        assert not result.was_scrubbed, f"{email} triggered a finding"
+
+
+def test_no_scrub_test_domain_email():
+    """Common test domains should not be scrubbed."""
+    scrubber = make_scrubber()
+    for email in ['user@test.com', 'admin@localhost', 'noreply@invalid']:
+        result = scrubber.scrub(f"email = '{email}'")
+        assert email in result.text, f"{email} should not be scrubbed"
+        assert not result.was_scrubbed, f"{email} triggered a finding"
+
+
+def test_real_email_still_scrubbed_alongside_exempt():
+    """Real emails are still scrubbed even when exempt ones are present."""
+    scrubber = make_scrubber()
+    text = "from=admin@company.com to=test@example.com"
+    result = scrubber.scrub(text)
+
+    assert "admin@company.com" not in result.text
+    assert "test@example.com" in result.text
+
+
+def test_no_scrub_555_fiction_phone():
+    """NANP 555-01xx fictional phone numbers should not be scrubbed."""
+    scrubber = make_scrubber()
+    for phone in ['555-0100', '555-0199', '(555) 010-0000']:
+        result = scrubber.scrub(f"phone = '{phone}'")
+        assert phone in result.text, f"{phone} should not be scrubbed"
+
+
+def test_real_phone_still_scrubbed():
+    """Real US phone numbers are still scrubbed."""
+    scrubber = make_scrubber()
+    text = "call 212-555-1234"
+    result = scrubber.scrub(text)
+
+    assert "212-555-1234" not in result.text
+    assert result.was_scrubbed
+
+
 def test_warns_on_invalid_regex():
     """Should warn when config has invalid regex."""
     from dlp_scrubber import DLPScrubber
