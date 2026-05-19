@@ -1165,9 +1165,10 @@ def _make_workspace_relative(raw: str, workspace_root: Path, cwd: Path | None = 
     """
     if cwd is None:
         cwd = Path.cwd()
+    cwd = cwd.resolve()
     workspace_resolved = workspace_root.resolve()
     try:
-        cwd.resolve().relative_to(workspace_resolved)
+        cwd.relative_to(workspace_resolved)
     except ValueError:
         return raw
     try:

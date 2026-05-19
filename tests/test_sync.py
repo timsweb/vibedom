@@ -310,3 +310,12 @@ def test_make_workspace_relative_from_cwd_deeply_nested(tmp_path):
     cwd = workspace / 'src' / 'app'
     result = _make_workspace_relative('Controllers', workspace, cwd=cwd)
     assert result == 'src/app/Controllers'
+
+
+def test_make_workspace_relative_escape_protection(tmp_path):
+    """Test that escape attempts with ../ are returned unchanged."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    cwd = workspace
+    result = _make_workspace_relative('../../etc/passwd', workspace, cwd=cwd)
+    assert result == '../../etc/passwd'
