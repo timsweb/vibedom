@@ -380,3 +380,22 @@ def test_pull_prints_resolved_paths(sync_env):
                 )
 
     assert 'src/app/Controllers' in result.output
+
+
+def test_push_prints_resolved_paths(sync_env):
+    """push should print the resolved workspace-relative path before syncing."""
+    runner = CliRunner()
+
+    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
+        mock_registry = MagicMock()
+        mock_registry.find.return_value = sync_env['state']
+        mock_registry_cls.return_value = mock_registry
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('vibedom.cli._make_workspace_relative', return_value='src/app/Controllers'):
+                result = runner.invoke(
+                    main, ['push', 'myapp', 'app/Controllers'], catch_exceptions=False
+                )
+
+    assert 'src/app/Controllers' in result.output
