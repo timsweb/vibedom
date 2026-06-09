@@ -23,6 +23,13 @@ def test_config():
         config_dir = Path(tmpdir)
         yield config_dir
 
+
+@pytest.fixture(autouse=True)
+def _available_runtimes():
+    """Make both docker and container appear installed so VMManager() doesn't raise."""
+    with patch('shutil.which', side_effect=lambda cmd: f'/usr/local/bin/{cmd}' if cmd in ('docker', 'container') else None):
+        yield
+
 @pytest.mark.integration
 def test_vm_start_stop(test_workspace, test_config):
     """Should start and stop VM successfully."""
@@ -86,13 +93,13 @@ def test_vm_mounts_session_repo(test_workspace, test_config):
         shutil.rmtree(session.session_dir, ignore_errors=True)
 
 
-def test_detect_runtime_prefers_docker(test_workspace, test_config):
-    """Should prefer Docker when both runtimes are available."""
+def test_detect_runtime_prefers_apple(test_workspace, test_config):
+    """Should prefer apple/container over Docker when both are available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/' + cmd if cmd in ('docker', 'container') else None
         vm = VMManager(test_workspace, test_config)
-        assert vm.runtime == 'docker'
-        assert vm.runtime_cmd == 'docker'
+        assert vm.runtime == 'apple'
+        assert vm.runtime_cmd == 'container'
 
 
 def test_detect_runtime_falls_back_to_apple(test_workspace, test_config):
@@ -248,31 +255,30 @@ def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
     session_dir = tmp_path / 'session'
     session_dir.mkdir()
 
-    with patch('shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(test_workspace, test_config, session_dir)
+    vm = VMManager(test_workspace, test_config, session_dir, runtime='docker')
 
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-                    mock_proxy = MagicMock()
-                    mock_proxy.start.return_value = 54321
-                    mock_proxy.ca_cert_path = None
-                    mock_proxy_cls.return_value = mock_proxy
-                    try:
-                        vm.start()
-                    except RuntimeError:
-                        pass  # May fail on readiness check, that's ok
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        with patch('shutil.copy'):
+            with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+                mock_proxy = MagicMock()
+                mock_proxy.start.return_value = 54321
+                mock_proxy.ca_cert_path = None
+                mock_proxy_cls.return_value = mock_proxy
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass  # May fail on readiness check, that's ok
 
-            # Find the 'run' call
-            calls = mock_run.call_args_list
-            run_call = next(c for c in calls if 'run' in c[0][0])
-            cmd = run_call[0][0]
+        # Find the 'run' call
+        calls = mock_run.call_args_list
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        cmd = run_call[0][0]
 
-            # Check that Claude config volume is mounted
-            assert '-v' in cmd
-            volume_mount = 'vibedom-claude-config:/root/.claude'
-            assert volume_mount in cmd, f"Claude config volume mount '{volume_mount}' not found in command"
+        # Check that Claude config volume is mounted
+        assert '-v' in cmd
+        volume_mount = 'vibedom-claude-config:/root/.claude'
+        assert volume_mount in cmd, f"Claude config volume mount '{volume_mount}' not found in command"
 
 
 def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tmp_path):
@@ -280,26 +286,23 @@ def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tm
     session_dir = tmp_path / 'session'
     session_dir.mkdir()
 
-    # No .claude directory exists
-    with patch('vibedom.vm.Path.home', return_value=tmp_path):
-        with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, session_dir)
+    vm = VMManager(test_workspace, test_config, session_dir, runtime='docker')
 
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-                    mock_proxy = MagicMock()
-                    mock_proxy.start.return_value = 54321
-                    mock_proxy.ca_cert_path = None
-                    mock_proxy_cls.return_value = mock_proxy
-                    try:
-                        vm.start()
-                    except RuntimeError:
-                        pass
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        with patch('shutil.copy'):
+            with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+                mock_proxy = MagicMock()
+                mock_proxy.start.return_value = 54321
+                mock_proxy.ca_cert_path = None
+                mock_proxy_cls.return_value = mock_proxy
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
 
-            # Should still succeed, just without Claude mounts
-            assert mock_run.called
+        # Should still succeed, just without Claude mounts
+        assert mock_run.called
 
 
 def test_vm_start_uses_host_proxy(tmp_path):

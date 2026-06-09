@@ -1,6 +1,8 @@
 import json
+import shutil
 import tempfile
 from pathlib import Path
+import pytest
 from vibedom.gitleaks import scan_workspace, categorize_secret
 
 def test_scan_workspace_clean():
@@ -13,6 +15,7 @@ def test_scan_workspace_clean():
 
         assert findings == []
 
+@pytest.mark.skipif(shutil.which('gitleaks') is None, reason="gitleaks not installed")
 def test_scan_workspace_with_secrets():
     """Should detect hardcoded secrets"""
     with tempfile.TemporaryDirectory() as tmpdir:
