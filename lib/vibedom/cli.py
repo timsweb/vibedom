@@ -58,6 +58,52 @@ def _prompt_prefilled(prompt_text: str, prefill: str = '') -> str:
     return click.prompt(prompt_text, default=prefill, show_default=bool(prefill)).strip()
 
 
+def _prompt_and_save_cloudflare(config_dir: Path, whitelist_path: Path, existing: 'GlobalConfig') -> None:
+    """Prompt for Cloudflare AI Gateway credentials and save them.
+
+    Pre-fills prompts with *existing* values so the user can edit or keep them.
+    Skips saving (and prints a skip message) when account ID or gateway ID are blank.
+    """
+    account_id = _prompt_prefilled(
+        "  Cloudflare Account ID",
+        prefill=existing.cloudflare_account_id or '',
+    )
+    if not account_id:
+        click.echo("  Skipped")
+        return
+    gateway_id = _prompt_prefilled(
+        "  Cloudflare Gateway ID",
+        prefill=existing.cloudflare_gateway_id or '',
+    )
+    if not gateway_id:
+        click.echo("  Skipped (no gateway ID provided)")
+        return
+    gateway_token = _prompt_prefilled(
+        "  Gateway auth token (leave blank if gateway is public)",
+        prefill=existing.cloudflare_gateway_token or '',
+    )
+    default_user = existing.vibedom_username or _detect_username()
+    username = click.prompt(
+        "  Your username (used as cf-aig-metadata user for request attribution)",
+        default=default_user,
+        show_default=True,
+    ).strip()
+    cfg = GlobalConfig(
+        cloudflare_account_id=account_id,
+        cloudflare_gateway_id=gateway_id,
+        cloudflare_gateway_token=gateway_token or None,
+        vibedom_username=username or None,
+    )
+    cfg.save(config_dir)
+    click.echo("✓ Cloudflare AI Gateway configured")
+    click.echo(f"  Anthropic URL: {cfg.anthropic_base_url()}")
+    if cfg.cloudflare_gateway_token:
+        click.echo("  Auth token: configured")
+    if cfg.vibedom_username:
+        click.echo(f"  User ID: {cfg.vibedom_username}")
+    _ensure_cloudflare_whitelisted(whitelist_path)
+
+
 def _ensure_cloudflare_whitelisted(whitelist_path: Path) -> None:
     """Add gateway.ai.cloudflare.com to the whitelist if not already present."""
     text = whitelist_path.read_text()
@@ -139,49 +185,25 @@ def init(runtime: str):
     # Cloudflare AI Gateway (optional)
     click.echo("\n" + "="*60)
     click.echo("☁️  Cloudflare AI Gateway (optional)")
-    click.echo("   Routes AI API calls through Cloudflare for monitoring,")
-    click.echo("   rate limiting, caching, and cost controls.")
-    click.echo("   Press Enter to skip.")
     click.echo("="*60)
     existing_cfg = GlobalConfig.load(config_dir)
-    account_id = _prompt_prefilled(
-        "  Cloudflare Account ID",
-        prefill=existing_cfg.cloudflare_account_id or '',
-    )
-    if account_id:
-        gateway_id = _prompt_prefilled(
-            "  Cloudflare Gateway ID",
-            prefill=existing_cfg.cloudflare_gateway_id or '',
-        )
-        if gateway_id:
-            gateway_token = _prompt_prefilled(
-                "  Gateway auth token (leave blank if gateway is public)",
-                prefill=existing_cfg.cloudflare_gateway_token or '',
-            )
-            default_user = existing_cfg.vibedom_username or _detect_username()
-            username = click.prompt(
-                "  Your username (used as cf-aig-metadata user for request attribution)",
-                default=default_user,
-                show_default=True,
-            ).strip()
-            cfg = GlobalConfig(
-                cloudflare_account_id=account_id,
-                cloudflare_gateway_id=gateway_id,
-                cloudflare_gateway_token=gateway_token or None,
-                vibedom_username=username or None,
-            )
-            cfg.save(config_dir)
-            click.echo(f"✓ Cloudflare AI Gateway configured")
-            click.echo(f"  Anthropic URL: {cfg.anthropic_base_url()}")
-            if cfg.cloudflare_gateway_token:
-                click.echo("  Auth token: configured")
-            if cfg.vibedom_username:
-                click.echo(f"  User ID: {cfg.vibedom_username}")
-            _ensure_cloudflare_whitelisted(whitelist_path)
+    if existing_cfg.is_cloudflare_configured():
+        click.echo("✓ Already configured")
+        click.echo(f"  Anthropic URL: {existing_cfg.anthropic_base_url()}")
+        if existing_cfg.cloudflare_gateway_token:
+            click.echo("  Auth token: configured")
+        if existing_cfg.vibedom_username:
+            click.echo(f"  User ID: {existing_cfg.vibedom_username}")
+        if click.confirm("  Update Cloudflare configuration?", default=False):
+            _prompt_and_save_cloudflare(config_dir, whitelist_path, existing_cfg)
         else:
-            click.echo("  Skipped (no gateway ID provided)")
+            click.echo("  (run 'vibedom config cloudflare' to update later)")
+            _ensure_cloudflare_whitelisted(whitelist_path)
     else:
-        click.echo("  Skipped")
+        click.echo("   Routes AI API calls through Cloudflare for monitoring,")
+        click.echo("   rate limiting, caching, and cost controls.")
+        click.echo("   Press Enter to skip.")
+        _prompt_and_save_cloudflare(config_dir, whitelist_path, existing_cfg)
 
     # Build VM image
     click.echo("\nBuilding VM image (this may take a few minutes on first run)...")

@@ -84,6 +84,61 @@ def test_init_cloudflare_configured_without_token(tmp_path):
     assert saved.cloudflare_gateway_token is None
 
 
+def test_init_shows_existing_cloudflare_config_without_prompting(tmp_path):
+    """vibedom init shows existing CF config and offers update prompt; 'N' skips."""
+    from vibedom.global_config import GlobalConfig
+    config_dir = tmp_path / '.vibedom'
+    config_dir.mkdir(parents=True)
+    whitelist = config_dir / 'trusted_domains.txt'
+    whitelist.write_text('api.anthropic.com\n')
+    GlobalConfig(
+        cloudflare_account_id='acc123',
+        cloudflare_gateway_id='my-gw',
+        cloudflare_gateway_token='tok',
+        vibedom_username='alice',
+    ).save(config_dir)
+
+    runner = CliRunner()
+    with _init_patches(tmp_path):
+        result = runner.invoke(main, ['init'], input='N\n')
+
+    assert result.exit_code == 0, result.output
+    assert 'Already configured' in result.output
+    assert 'gateway.ai.cloudflare.com' in result.output
+    assert 'Auth token: configured' in result.output
+    assert 'User ID: alice' in result.output
+    assert 'vibedom config cloudflare' in result.output
+    assert 'gateway.ai.cloudflare.com' in whitelist.read_text()
+
+
+def test_init_updates_existing_cloudflare_config_when_confirmed(tmp_path):
+    """vibedom init re-prompts with existing values pre-filled when user confirms update."""
+    from vibedom.global_config import GlobalConfig
+    config_dir = tmp_path / '.vibedom'
+    config_dir.mkdir(parents=True)
+    whitelist = config_dir / 'trusted_domains.txt'
+    whitelist.write_text('api.anthropic.com\n')
+    GlobalConfig(
+        cloudflare_account_id='old-acc',
+        cloudflare_gateway_id='old-gw',
+        cloudflare_gateway_token=None,
+        vibedom_username='alice',
+    ).save(config_dir)
+
+    runner = CliRunner()
+    with _init_patches(tmp_path):
+        # confirm update, then supply new values
+        result = runner.invoke(main, ['init'], input='y\nnew-acc\nnew-gw\nnew-tok\nbob\n')
+
+    assert result.exit_code == 0, result.output
+    assert '✓ Cloudflare AI Gateway configured' in result.output
+    saved = GlobalConfig.load(config_dir)
+    assert saved.cloudflare_account_id == 'new-acc'
+    assert saved.cloudflare_gateway_id == 'new-gw'
+    assert saved.cloudflare_gateway_token == 'new-tok'
+    assert saved.vibedom_username == 'bob'
+
+
 def test_init_cloudflare_token_prompt_is_not_hidden(tmp_path):
     """vibedom init token prompt must not use hide_input=True."""
     captured_kwargs = {}
