@@ -19,7 +19,9 @@ class VMManager:
                  base_image: Optional[str] = None,
                  host_aliases: Optional[dict] = None,
                  container_dir: Optional[Path] = None,
-                 memory: Optional[str] = None):
+                 memory: Optional[str] = None,
+                 extra_env: Optional[dict] = None,
+                 proxy_extra_env: Optional[dict] = None):
         """Initialize VM manager.
 
         Args:
@@ -35,6 +37,10 @@ class VMManager:
                 Takes precedence over session_dir for the repo mount.
             memory: Memory limit for the container (e.g. '4g', '2048m'). Defaults to 4g on
                 apple/container (whose default 1GB is insufficient for Claude Code).
+            extra_env: Additional environment variables to inject into the container.
+                Used for e.g. ANTHROPIC_BASE_URL when Cloudflare AI Gateway is configured.
+            proxy_extra_env: Additional environment variables to inject into the mitmproxy host
+                process. Used for e.g. CF gateway auth token and user ID headers.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
@@ -43,6 +49,8 @@ class VMManager:
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.memory = memory
+        self.extra_env = extra_env or {}
+        self.proxy_extra_env = proxy_extra_env or {}
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
@@ -53,27 +61,33 @@ class VMManager:
         """Detect available container runtime or use specified one.
 
         Args:
-            runtime: Explicit runtime ('docker' or 'apple'), or None for auto-detect
+            runtime: Explicit runtime ('docker', 'podman', or 'apple'), or None for auto-detect
 
         Returns:
-            Tuple of (runtime_name, command) — e.g. ('apple', 'container')
+            Tuple of (runtime_name, command) — e.g. ('apple', 'container'), ('podman', 'podman')
         """
         if runtime == 'docker':
             if not shutil.which('docker'):
                 raise RuntimeError("Docker runtime requested but not found on system.")
             return 'docker', 'docker'
+        if runtime == 'podman':
+            if not shutil.which('podman'):
+                raise RuntimeError("Podman runtime requested but not found on system.")
+            return 'podman', 'podman'
         if runtime == 'apple':
             if not shutil.which('container'):
                 raise RuntimeError("apple/container runtime requested but not found on system.")
             return 'apple', 'container'
 
-        # Auto-detect: apple/container preferred (hardware VM isolation); Docker is fallback
+        # Auto-detect: apple/container preferred (hardware VM isolation); podman and docker are fallbacks
         if shutil.which('container'):
             return 'apple', 'container'
         if shutil.which('docker'):
             return 'docker', 'docker'
+        if shutil.which('podman'):
+            return 'podman', 'podman'
         raise RuntimeError(
-            "No container runtime found. Install Docker or apple/container (experimental, macOS 26+)."
+            "No container runtime found. Install Docker, Podman, or apple/container (experimental, macOS 26+)."
         )
 
     @staticmethod
@@ -99,11 +113,16 @@ class VMManager:
         if not dockerfile.exists():
             raise RuntimeError(f"Dockerfile not found at {dockerfile}")
 
-        subprocess.run(
-            [runtime_cmd, 'build', '-t', 'vibedom-alpine:latest',
-             '-f', str(dockerfile), str(container_dir)],
-            check=True
-        )
+        try:
+            subprocess.run(
+                [runtime_cmd, 'build', '-t', 'vibedom-alpine:latest',
+                 '-f', str(dockerfile), str(container_dir)],
+                check=True
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"`{runtime_cmd} build` failed (exit {exc.returncode})"
+            ) from exc
 
     def _image_name(self) -> str:
         """Return the image to run. Builds project layer if base_image set."""
@@ -247,6 +266,7 @@ class VMManager:
         self._proxy = ProxyManager(
             session_dir=proxy_log_dir,
             config_dir=self.config_dir,
+            extra_env=self.proxy_extra_env,
         )
         proxy_port = self._proxy.start()
 
@@ -257,7 +277,12 @@ class VMManager:
         detach_flag = '--detach' if self.runtime == 'apple' else '-d'
         # apple/container doesn't support --add-host and doesn't inject host.docker.internal,
         # so we use the default network gateway IP to reach the host proxy.
-        proxy_host = self._apple_host_ip() if self.runtime == 'apple' else 'host.docker.internal'
+        if self.runtime == 'apple':
+            proxy_host = self._apple_host_ip()
+        elif self.runtime == 'podman':
+            proxy_host = 'host.containers.internal'
+        else:
+            proxy_host = 'host.docker.internal'
         proxy_url = f'http://{proxy_host}:{proxy_port}'
         # CA bundle path inside the container (set by update-ca-certificates)
         ca_bundle = '/etc/ssl/certs/ca-certificates.crt'
@@ -272,10 +297,12 @@ class VMManager:
         ]
         if memory_limit:
             cmd += ['--memory', memory_limit]
-        # Docker on Linux needs --add-host to resolve host.docker.internal;
+        # Docker/podman on Linux need --add-host to resolve the host gateway hostname;
         # apple/container doesn't support the flag (we use the gateway IP directly instead).
-        if self.runtime != 'apple':
+        if self.runtime == 'docker':
             cmd += ['--add-host', 'host.docker.internal:host-gateway']
+        elif self.runtime == 'podman':
+            cmd += ['--add-host', 'host.containers.internal:host-gateway']
         cmd += [
             # Host IP — lets apps inside the container reach host-bound services
             # (Docker Compose ports, etc.) without hardcoding an address.
@@ -292,6 +319,11 @@ class VMManager:
             '-e', f'SSL_CERT_FILE={ca_bundle}',
             '-e', f'CURL_CA_BUNDLE={ca_bundle}',
             '-e', f'NODE_EXTRA_CA_CERTS={ca_bundle}',
+        ]
+        # Extra env vars (e.g. ANTHROPIC_BASE_URL for Cloudflare AI Gateway)
+        for key, value in self.extra_env.items():
+            cmd += ['-e', f'{key}={value}']
+        cmd += [
             # Mounts
             '-v', f'{self.workspace}:/mnt/workspace:ro',
             '-v', f'{self.config_dir}:/mnt/config:ro',
