@@ -899,9 +899,10 @@ def test_proxy_restart_persistent_container(tmp_path):
     mock_proxy.port = 54321
 
     with patch('vibedom.cli.Path.home', return_value=tmp_path):
-        with patch('os.kill') as mock_kill:
-            with patch('vibedom.cli.ProxyManager', return_value=mock_proxy):
-                result = runner.invoke(main, ['proxy-restart', 'myapp'])
+        with patch('vibedom.cli._live_container_status', return_value='running'):
+            with patch('os.kill') as mock_kill:
+                with patch('vibedom.cli.ProxyManager', return_value=mock_proxy):
+                    result = runner.invoke(main, ['proxy-restart', 'myapp'])
 
     assert result.exit_code == 0, result.output
     mock_kill.assert_called_once_with(99999, signal.SIGTERM)
@@ -913,14 +914,47 @@ def test_proxy_restart_persistent_container(tmp_path):
     assert state['proxy_pid'] == 88888
 
 
+def test_proxy_restart_uses_live_status_not_persisted(tmp_path):
+    """proxy-restart must trust the live runtime status, not a stale container.json.
+
+    Regression: `vibedom list` reported the container running (live inspect)
+    while proxy-restart refused it because the persisted status field still
+    said 'stopped'. The live check is the source of truth, and the restart
+    should reconcile the stale field back to 'running'.
+    """
+    container_dir = _make_container(tmp_path, name='waterstones-api',
+                                    status='stopped',  # stale persisted value
+                                    proxy_pid=99999, proxy_port=63337)
+
+    runner = CliRunner()
+    mock_proxy = MagicMock()
+    mock_proxy.pid = 88888
+    mock_proxy.port = 63337
+
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli._live_container_status', return_value='running'):
+            with patch('os.kill'):
+                with patch('vibedom.cli.ProxyManager', return_value=mock_proxy):
+                    result = runner.invoke(
+                        main, ['proxy-restart', 'waterstones-api'])
+
+    assert result.exit_code == 0, result.output
+    mock_proxy.start.assert_called_once_with(port=63337)
+
+    state = json.loads((container_dir / 'container.json').read_text())
+    assert state['proxy_pid'] == 88888
+    assert state['status'] == 'running'  # stale field reconciled
+
+
 def test_proxy_restart_container_not_running(tmp_path):
-    """proxy-restart should refuse to restart the proxy for a stopped container."""
-    _make_container(tmp_path, name='myapp', status='stopped', proxy_pid=None)
+    """proxy-restart should refuse a container the runtime reports as not running."""
+    _make_container(tmp_path, name='myapp', status='running', proxy_pid=99999)
 
     runner = CliRunner()
     with patch('vibedom.cli.Path.home', return_value=tmp_path):
-        with patch('vibedom.cli.ProxyManager') as mock_pm:
-            result = runner.invoke(main, ['proxy-restart', 'myapp'])
+        with patch('vibedom.cli._live_container_status', return_value='exited'):
+            with patch('vibedom.cli.ProxyManager') as mock_pm:
+                result = runner.invoke(main, ['proxy-restart', 'myapp'])
 
     assert result.exit_code == 1
     assert 'not running' in result.output.lower()

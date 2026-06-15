@@ -832,10 +832,14 @@ def _restart_container_proxy(container: ContainerState, config_dir: Path) -> Non
     so the mitmproxy addon code is reloaded (e.g. after a DLP-scrubber fix).
     Exits the process with a non-zero status on error.
     """
-    if container.status != 'running':
+    # Trust the runtime, not the persisted status field, which can drift
+    # (e.g. a reboot restarts the container without updating container.json).
+    # This is the same source of truth `vibedom list` uses.
+    live_status = _live_container_status(container)
+    if live_status != 'running':
         click.secho(
             f"❌ Container '{Path(container.workspace).name}' is not running "
-            f"(status: {container.status}) — start it with 'vibedom up' first.",
+            f"(status: {live_status}) — start it with 'vibedom up' first.",
             fg='red'
         )
         sys.exit(1)
@@ -868,6 +872,7 @@ def _restart_container_proxy(container: ContainerState, config_dir: Path) -> Non
 
     container.proxy_pid = proxy.pid
     container.proxy_port = proxy.port
+    container.status = 'running'  # reconcile any drift in the persisted field
     container.save(container_dir)
 
     click.echo(f"✅ Proxy restarted on port {proxy.port} (PID {proxy.pid})")
