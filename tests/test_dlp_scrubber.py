@@ -333,3 +333,93 @@ regex = '''[invalid('''
         assert len(scrubber.warnings) == 2
         assert any("bad-regex" in w for w in scrubber.warnings)
         assert "WARNING" in warning_output
+
+
+# --- JSON-aware scrubbing (scrub_json) ---------------------------------------
+
+def test_scrub_json_redacts_email_in_string_value():
+    """scrub_json should redact PII inside JSON string values."""
+    import json
+    from dlp_scrubber import DLPScrubber
+
+    scrubber = DLPScrubber(gitleaks_config=None)
+    email = "alice" + chr(64) + "acme.io"  # non-exempt domain
+    raw = json.dumps({"author": email, "role": "user"})
+
+    result = scrubber.scrub_json(raw)
+
+    assert result.was_scrubbed
+    assert email not in result.text
+    assert "[REDACTED_EMAIL]" in result.text
+    # Result must remain valid JSON
+    parsed = json.loads(result.text)
+    assert parsed["role"] == "user"
+
+
+def test_scrub_json_leaves_bare_numbers_untouched():
+    """A numeric PII pattern must NOT corrupt a bare (unquoted) JSON number.
+
+    Regression for 400 Bad Request: scrubbing a bare number in value position
+    with a [REDACTED_*] placeholder produces invalid JSON.
+    """
+    import json
+    from dlp_scrubber import DLPScrubber
+
+    scrubber = DLPScrubber(gitleaks_config=None)
+    phone = "8" + "00" + "555" + "1234"   # matches phone_us as a bare string
+    card = "4" + "111" + "1111" + "11111111"  # matches credit_card
+    # Precondition: these values really do match the numeric patterns
+    assert scrubber.scrub(phone).was_scrubbed
+    assert scrubber.scrub(card).was_scrubbed
+
+    raw = '{"model":"x","input":{"since_ts":' + phone + ',"card_id":' + card + '}}'
+    assert json.loads(raw)  # original is valid
+
+    result = scrubber.scrub_json(raw)
+
+    # Result must be valid JSON and preserve the bare numeric values
+    parsed = json.loads(result.text)
+    assert parsed["input"]["since_ts"] == int(phone)
+    assert parsed["input"]["card_id"] == int(card)
+    assert "[REDACTED" not in result.text
+
+
+def test_scrub_json_redacts_numeric_pattern_inside_string():
+    """Numeric PII inside a string value is still scrubbed (coverage retained)."""
+    import json
+    from dlp_scrubber import DLPScrubber
+
+    scrubber = DLPScrubber(gitleaks_config=None)
+    card = "4" + "111" + "1111" + "11111111"
+    raw = json.dumps({"note": "card on file " + card})
+
+    result = scrubber.scrub_json(raw)
+
+    assert result.was_scrubbed
+    assert card not in result.text
+    assert json.loads(result.text)  # still valid JSON
+
+
+def test_scrub_json_unchanged_when_no_findings():
+    """No findings -> original text returned untouched (no reformatting churn)."""
+    import json
+    from dlp_scrubber import DLPScrubber
+
+    scrubber = DLPScrubber(gitleaks_config=None)
+    raw = '{"model":"x","max_tokens":4096}'
+
+    result = scrubber.scrub_json(raw)
+
+    assert not result.was_scrubbed
+    assert result.text == raw
+
+
+def test_scrub_json_raises_on_invalid_json():
+    """Invalid JSON should raise so callers can fall back to raw-text scrubbing."""
+    import json
+    import pytest
+    from dlp_scrubber import DLPScrubber
+
+    scrubber = DLPScrubber(gitleaks_config=None)
+    with pytest.raises(json.JSONDecodeError):
+        scrubber.scrub_json("not json at all {")

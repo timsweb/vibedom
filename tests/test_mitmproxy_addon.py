@@ -147,3 +147,69 @@ def test_missing_whitelist_prints_warning(mock_mkdir, tmp_path, monkeypatch, cap
     captured = capsys.readouterr()
     assert 'WARNING' in captured.err
     assert 'blocking all traffic' in captured.err
+
+
+@patch('pathlib.Path.mkdir')
+def test_json_request_body_stays_valid_after_scrub(mock_mkdir):
+    """A JSON body with a bare numeric field must stay valid JSON after scrubbing.
+
+    Regression for 400 Bad Request: numeric PII patterns matching a bare
+    (unquoted) JSON number used to insert a [REDACTED_*] token in value
+    position, corrupting the request.
+    """
+    import json
+    from mitmproxy_addon import VibedomProxy
+
+    proxy = VibedomProxy()
+
+    phone = "8" + "00" + "555" + "1234"        # matches phone_us
+    card = "4" + "111" + "1111" + "11111111"   # matches credit_card
+    email = "alice" + chr(64) + "acme.io"  # non-exempt domain
+    body = (
+        '{"model":"x","messages":[{"role":"assistant","content":'
+        '[{"type":"tool_use","input":{"since_ts":' + phone
+        + ',"card_id":' + card + ',"author":"' + email + '"}}]}]}'
+    )
+    raw = body.encode('utf-8')
+
+    flow = MagicMock()
+    flow.request.host = "api.anthropic.com"
+    flow.request.host_header = "api.anthropic.com"
+    flow.request.content = raw
+    flow.request.pretty_url = "https://api.anthropic.com/v1/messages"
+    flow.request.url = "https://api.anthropic.com/v1/messages"
+    flow.request.headers = {"Content-Type": "application/json"}
+
+    proxy.request(flow)
+
+    # Body must remain valid JSON
+    scrubbed = json.loads(flow.request.content.decode('utf-8'))
+    inp = scrubbed["messages"][0]["content"][0]["input"]
+    # Bare numbers preserved; string email redacted
+    assert inp["since_ts"] == int(phone)
+    assert inp["card_id"] == int(card)
+    assert inp["author"] == "[REDACTED_EMAIL]"
+
+
+@patch('pathlib.Path.mkdir')
+def test_non_json_body_falls_back_to_raw_scrub(mock_mkdir):
+    """Non-JSON (e.g. form-encoded) bodies still get raw-text scrubbing."""
+    from mitmproxy_addon import VibedomProxy
+
+    proxy = VibedomProxy()
+    email = "bob" + chr(64) + "acme.io"  # non-exempt domain
+    raw = ("contact=" + email).encode('utf-8')
+
+    flow = MagicMock()
+    flow.request.host = "api.anthropic.com"
+    flow.request.host_header = "api.anthropic.com"
+    flow.request.content = raw
+    flow.request.pretty_url = "https://api.anthropic.com/submit"
+    flow.request.url = "https://api.anthropic.com/submit"
+    flow.request.headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    proxy.request(flow)
+
+    out = flow.request.content.decode('utf-8')
+    assert email not in out
+    assert "[REDACTED_EMAIL]" in out

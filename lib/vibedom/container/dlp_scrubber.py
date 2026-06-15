@@ -4,6 +4,7 @@ Loads secret patterns from gitleaks.toml (shared with pre-flight scanning)
 and provides built-in PII patterns. Zero external dependencies.
 """
 
+import json
 import re
 import sys
 import tomllib
@@ -212,6 +213,52 @@ class DLPScrubber:
         findings.reverse()
 
         return ScrubResult(text=scrubbed, findings=findings)
+
+    def scrub_json(self, text: str) -> ScrubResult:
+        """Scrub PII/secrets from a JSON document, touching only string values.
+
+        Parses the JSON, recursively scrubs string leaves with ``scrub()``, and
+        re-serializes. Because only string *values* are rewritten (never bare
+        numbers, booleans, or structural tokens), the output is always valid
+        JSON when the input is — which prevents the malformed-body 400s caused
+        by a numeric pattern (credit_card/phone_us/us_ssn) matching a bare
+        number in value position.
+
+        Args:
+            text: A JSON document.
+
+        Returns:
+            ScrubResult with re-serialized text and the audit trail of findings.
+            If nothing matched, the original ``text`` is returned unchanged to
+            avoid reformatting churn.
+
+        Raises:
+            json.JSONDecodeError: If ``text`` is not valid JSON. Callers should
+                fall back to raw-text scrubbing for non-JSON bodies.
+        """
+        data = json.loads(text)
+        findings: list[Finding] = []
+
+        def walk(obj):
+            if isinstance(obj, str):
+                result = self.scrub(obj)
+                findings.extend(result.findings)
+                return result.text
+            if isinstance(obj, list):
+                return [walk(item) for item in obj]
+            if isinstance(obj, dict):
+                return {key: walk(value) for key, value in obj.items()}
+            return obj
+
+        scrubbed = walk(data)
+
+        if not findings:
+            return ScrubResult(text=text)
+
+        return ScrubResult(
+            text=json.dumps(scrubbed, ensure_ascii=False, separators=(',', ':')),
+            findings=findings,
+        )
 
     def _scrub_large_text(self, text: str) -> ScrubResult:
         """Scrub large text by processing in chunks with overlap."""

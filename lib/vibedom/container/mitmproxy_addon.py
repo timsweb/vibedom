@@ -118,7 +118,17 @@ class VibedomProxy:
         except UnicodeDecodeError:
             return content, []
 
-        result = self.scrubber.scrub(text)
+        # For JSON bodies, scrub structure-aware so a numeric PII pattern can
+        # never corrupt the document (e.g. a bare number in value position).
+        # Fall back to raw-text scrubbing if the body isn't actually valid JSON.
+        if content_type and content_type.startswith('application/json'):
+            try:
+                result = self.scrubber.scrub_json(text)
+            except json.JSONDecodeError:
+                result = self.scrubber.scrub(text)
+        else:
+            result = self.scrubber.scrub(text)
+
         if result.was_scrubbed:
             return result.text.encode('utf-8'), result.findings
         return content, []
