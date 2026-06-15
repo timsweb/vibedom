@@ -629,15 +629,24 @@ def reload_whitelist() -> None:
 @main.command('proxy-restart')
 @click.argument('session_id', required=False)
 def proxy_restart(session_id: Optional[str]) -> None:
-    """Restart the host proxy for a running session.
+    """Restart the host proxy for a running session or persistent container.
 
-    SESSION_ID is a session ID or workspace name.
+    SESSION_ID is a session ID, container name, or workspace name.
     If omitted, auto-selects the only running session.
 
     Stops the proxy if it is running, then starts a fresh one on the same
-    port so the container's HTTP_PROXY setting remains valid.
+    port so the container's HTTP_PROXY setting remains valid. Use this to
+    reload the mitmproxy addon code (e.g. after a DLP-scrubber update).
     """
-    logs_dir = Path.home() / '.vibedom' / 'logs'
+    config_dir = Path.home() / '.vibedom'
+
+    # Persistent containers aren't tracked by SessionRegistry — resolve them first.
+    container = ContainerRegistry().find(session_id) if session_id else None
+    if container is not None:
+        _restart_container_proxy(container, config_dir)
+        return
+
+    logs_dir = config_dir / 'logs'
     registry = SessionRegistry(logs_dir)
     session = registry.resolve(session_id, running_only=True)
 
@@ -658,7 +667,6 @@ def proxy_restart(session_id: Optional[str]) -> None:
             click.echo(f"Proxy (PID {session.state.proxy_pid}) was already stopped")
 
     # Start fresh proxy on the same port
-    config_dir = Path.home() / '.vibedom'
     proxy = ProxyManager(session_dir=session.session_dir, config_dir=config_dir)
     try:
         proxy.start(port=session.state.proxy_port)
@@ -814,6 +822,55 @@ def _ensure_proxy_running(
     container_state.save(container_dir)
     click.echo(f"Proxy started on port {proxy.port} (PID {proxy.pid})")
     return proxy
+
+
+def _restart_container_proxy(container: ContainerState, config_dir: Path) -> None:
+    """Force-restart the host proxy for a running persistent container.
+
+    Unlike ``_ensure_proxy_running`` (which only starts a dead proxy), this
+    always stops the current proxy and starts a fresh one on the same port,
+    so the mitmproxy addon code is reloaded (e.g. after a DLP-scrubber fix).
+    Exits the process with a non-zero status on error.
+    """
+    if container.status != 'running':
+        click.secho(
+            f"❌ Container '{Path(container.workspace).name}' is not running "
+            f"(status: {container.status}) — start it with 'vibedom up' first.",
+            fg='red'
+        )
+        sys.exit(1)
+
+    if not container.proxy_port:
+        click.secho(
+            "❌ No proxy port recorded for this container "
+            "(started with older vibedom?)",
+            fg='red'
+        )
+        sys.exit(1)
+
+    container_dir = config_dir / 'containers' / Path(container.workspace).name
+
+    # Stop existing proxy if still running
+    if container.proxy_pid:
+        try:
+            os.kill(container.proxy_pid, signal_module.SIGTERM)
+            click.echo(f"Stopped proxy (PID {container.proxy_pid})")
+        except ProcessLookupError:
+            click.echo(f"Proxy (PID {container.proxy_pid}) was already stopped")
+
+    # Start fresh proxy on the same port so the container's HTTP_PROXY stays valid
+    proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+    try:
+        proxy.start(port=container.proxy_port)
+    except RuntimeError as e:
+        click.secho(f"❌ Failed to start proxy: {e}", fg='red')
+        sys.exit(1)
+
+    container.proxy_pid = proxy.pid
+    container.proxy_port = proxy.port
+    container.save(container_dir)
+
+    click.echo(f"✅ Proxy restarted on port {proxy.port} (PID {proxy.pid})")
 
 
 @main.command()

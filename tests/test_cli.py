@@ -864,3 +864,64 @@ def test_proxy_restart_fails_if_no_port_recorded(tmp_path):
 
     assert result.exit_code == 1
     assert 'No proxy port' in result.output
+
+
+def _make_container(tmp_path, name='myapp', status='running',
+                    proxy_pid=99999, proxy_port=54321):
+    """Create a container.json under ~/.vibedom/containers/<name>/ for tests."""
+    from vibedom.container_state import ContainerState
+
+    workspace = tmp_path / name
+    workspace.mkdir(exist_ok=True)
+    container_dir = tmp_path / '.vibedom' / 'containers' / name
+    state = ContainerState(
+        workspace=str(workspace),
+        container_name=f'vibedom-{name}',
+        runtime='docker',
+        created_at='2026-06-15T00:00:00',
+        repo_dir=str(container_dir / 'repo'),
+        status=status,
+        proxy_port=proxy_port,
+        proxy_pid=proxy_pid,
+    )
+    state.save(container_dir)
+    return container_dir
+
+
+def test_proxy_restart_persistent_container(tmp_path):
+    """proxy-restart should restart the proxy for a persistent container by name."""
+    container_dir = _make_container(tmp_path, name='myapp',
+                                    proxy_pid=99999, proxy_port=54321)
+
+    runner = CliRunner()
+    mock_proxy = MagicMock()
+    mock_proxy.pid = 88888
+    mock_proxy.port = 54321
+
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('os.kill') as mock_kill:
+            with patch('vibedom.cli.ProxyManager', return_value=mock_proxy):
+                result = runner.invoke(main, ['proxy-restart', 'myapp'])
+
+    assert result.exit_code == 0, result.output
+    mock_kill.assert_called_once_with(99999, signal.SIGTERM)
+    mock_proxy.start.assert_called_once_with(port=54321)
+    assert '88888' in result.output
+
+    # New PID should be persisted to container.json
+    state = json.loads((container_dir / 'container.json').read_text())
+    assert state['proxy_pid'] == 88888
+
+
+def test_proxy_restart_container_not_running(tmp_path):
+    """proxy-restart should refuse to restart the proxy for a stopped container."""
+    _make_container(tmp_path, name='myapp', status='stopped', proxy_pid=None)
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=tmp_path):
+        with patch('vibedom.cli.ProxyManager') as mock_pm:
+            result = runner.invoke(main, ['proxy-restart', 'myapp'])
+
+    assert result.exit_code == 1
+    assert 'not running' in result.output.lower()
+    mock_pm.assert_not_called()
