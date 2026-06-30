@@ -198,6 +198,41 @@ def test_start_uses_docker_runtime(test_workspace, test_config, tmp_path):
         assert '--privileged' not in run_call[0][0]
 
 
+def test_start_sets_ssh_auth_sock_env(test_workspace, test_config, tmp_path):
+    """start() should set SSH_AUTH_SOCK as a container env var so every exec
+    session inherits it — not just login shells that source /etc/profile.d.
+
+    Regression: the deploy-key agent socket was only exported via
+    /etc/profile.d/ssh-agent.sh, so non-login / non-interactive shells (the
+    ephemeral 'attach' shell, agent-run commands, scripts) couldn't reach the
+    agent and git fell back to prompting for credentials.
+    """
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+        calls = mock_run.call_args_list
+        run_call = next(c for c in calls if 'run' in c[0][0])
+        cmd = run_call[0][0]
+        # The -e flag and its value must appear as adjacent argv entries
+        assert 'SSH_AUTH_SOCK=/tmp/ssh-agent.sock' in cmd
+        idx = cmd.index('SSH_AUTH_SOCK=/tmp/ssh-agent.sock')
+        assert cmd[idx - 1] == '-e'
+
+
 def test_stop_uses_apple_commands(test_workspace, test_config):
     """stop() should use 'container stop' + 'container delete' for apple runtime."""
     with patch('shutil.which') as mock_which:

@@ -300,8 +300,10 @@ def attach(session_id):
         sys.exit(1)
 
     runtime_cmd = 'container' if session.state.runtime == 'apple' else 'docker'
+    # --login so the shell sources /etc/profile.d (PATH, SSH agent), matching
+    # 'vibedom shell' for persistent containers.
     cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
-           session.state.container_name, 'bash']
+           session.state.container_name, 'bash', '--login']
     try:
         subprocess.run(cmd)
     except FileNotFoundError:

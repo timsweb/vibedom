@@ -18,6 +18,11 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV USE_BUILTIN_RIPGREP=0
 ENV PATH="/root/.local/bin:$PATH"
 
+# Ensure /root/.local/bin is in PATH for login shells (bash --login sources
+# /etc/profile which resets PATH, dropping the ENV above — so `claude` would
+# vanish from `vibedom shell`/`attach`). Parity with Dockerfile.alpine.
+RUN echo 'export PATH="/root/.local/bin:$PATH"' > /etc/profile.d/local-bin.sh
+
 # Create required vibedom mount points
 RUN mkdir -p /usr/local/share/ca-certificates /mnt/workspace /work /mnt/config /mnt/session
 

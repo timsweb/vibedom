@@ -292,6 +292,12 @@ class VMManager:
             '-e', f'SSL_CERT_FILE={ca_bundle}',
             '-e', f'CURL_CA_BUNDLE={ca_bundle}',
             '-e', f'NODE_EXTRA_CA_CERTS={ca_bundle}',
+            # Deploy-key agent socket (fixed path from startup.sh). Set here so
+            # EVERY exec session inherits it — not just login shells that source
+            # /etc/profile.d. Otherwise non-login/non-interactive shells (the
+            # 'attach' shell, agent-run commands) can't reach the SSH agent and
+            # git falls back to prompting for credentials.
+            '-e', 'SSH_AUTH_SOCK=/tmp/ssh-agent.sock',
             # Mounts
             '-v', f'{self.workspace}:/mnt/workspace:ro',
             '-v', f'{self.config_dir}:/mnt/config:ro',
