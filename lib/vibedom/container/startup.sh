@@ -3,6 +3,19 @@ set -e
 
 echo "Starting vibedom VM..."
 
+# Set a default git identity for agent commits, but NEVER clobber one the user
+# has already configured (locally or globally). Without this guard, the
+# unconditional `git config` ran on every container start and reset the user's
+# name/email back to "Vibedom Agent" after each `vibedom up`/restart.
+ensure_git_identity() {
+    if ! git config user.name >/dev/null 2>&1; then
+        git config user.name "Vibedom Agent"
+    fi
+    if ! git config user.email >/dev/null 2>&1; then
+        git config user.email "[REDACTED_EMAIL]"
+    fi
+}
+
 # Initialize git repository from workspace (skip if already initialized)
 if [ -d /work/repo/.git ]; then
     echo "Existing repo found at /work/repo, skipping clone"
@@ -36,17 +49,15 @@ else
     cd /work/repo
     git init
 
-    # Set git identity for agent commits
-    git config user.name "Vibedom Agent"
-    git config user.email "agent@vibedom.local"
+    # Set a default identity so the initial snapshot commit succeeds
+    ensure_git_identity
 
     git add .
     git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
 fi
 
-# Set git identity for agent commits (for git workspaces)
-git config user.name "Vibedom Agent"
-git config user.email "agent@vibedom.local"
+# Apply the default agent identity only if the user has not set their own
+ensure_git_identity
 
 echo "Git repository initialized at /work/repo"
 
