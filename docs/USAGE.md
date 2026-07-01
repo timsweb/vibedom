@@ -99,6 +99,10 @@ network: wapi_shared_network      # join this docker network (for DB, Redis, etc
 host_aliases:
   wapi-redis: host                # resolve this hostname to the host machine
 
+env:                              # extra env vars injected into the container
+  DB_PORT: 1234                   # e.g. point the app at a different DB port
+  DB_HOST: host.docker.internal
+
 setup:
   - composer install              # run once on first 'vibedom up'
   - cp .env.example .env
@@ -110,6 +114,12 @@ sync_exclude:                     # extra excludes on top of .gitignore
 ```
 
 `setup:` commands run once when the container is first created, not on subsequent restarts. Packages installed during setup persist in the container.
+
+`env:` vars are baked into the container at creation time (like `network`/`memory`). Changing them in `vibedom.yml` takes effect after a `vibedom destroy` + `vibedom up`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.
+
+### Git identity
+
+Your host git identity is lifted into the container automatically. On container creation, vibedom reads `git config user.name` / `user.email` from your workspace directory (respecting a per-repo override, falling back to your global config) and uses it as the container's git identity, so agent commits are authored as you. If the host has no identity configured, commits fall back to the default `Vibedom Agent`. You can still override explicitly with `GIT_AUTHOR_*`/`GIT_COMMITTER_*` under `env:` or a `git config` command under `setup:`; both take precedence over the lifted identity.
 
 > **apple/container:** The `network:` field is not supported. Expose services on the host and connect via `host.docker.internal`. Vibedom will warn and ignore the setting.
 

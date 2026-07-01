@@ -149,7 +149,8 @@ def run(workspace, runtime):
                        runtime=resolved_runtime,
                        network=project_config.network if project_config else None,
                        base_image=project_config.base_image if project_config else None,
-                       host_aliases=project_config.host_aliases if project_config else None)
+                       host_aliases=project_config.host_aliases if project_config else None,
+                       extra_env=project_config.env if project_config else None)
         vm.start()
 
         # Store proxy info so reload-whitelist can send SIGHUP to the host process
@@ -920,6 +921,7 @@ def up(workspace, runtime):
         base_image=project_config.base_image if project_config else None,
         host_aliases=project_config.host_aliases if project_config else None,
         memory=project_config.memory if project_config else None,
+        extra_env=project_config.env if project_config else None,
     )
 
     if vm.is_running():

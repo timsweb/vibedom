@@ -94,3 +94,19 @@ def test_project_config_sync_exclude_defaults_to_none(tmp_path):
     (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
     config = ProjectConfig.load(tmp_path)
     assert config.sync_exclude is None
+
+
+def test_project_config_loads_env(tmp_path):
+    """Should parse env mapping from vibedom.yml."""
+    (tmp_path / 'vibedom.yml').write_text(
+        'env:\n  DB_PORT: 1234\n  DB_HOST: host.docker.internal\n'
+    )
+    config = ProjectConfig.load(tmp_path)
+    assert config.env == {'DB_PORT': 1234, 'DB_HOST': 'host.docker.internal'}
+
+
+def test_project_config_env_defaults_to_none(tmp_path):
+    """env is optional and defaults to None."""
+    (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.env is None

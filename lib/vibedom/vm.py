@@ -19,7 +19,8 @@ class VMManager:
                  base_image: Optional[str] = None,
                  host_aliases: Optional[dict] = None,
                  container_dir: Optional[Path] = None,
-                 memory: Optional[str] = None):
+                 memory: Optional[str] = None,
+                 extra_env: Optional[dict] = None):
         """Initialize VM manager.
 
         Args:
@@ -35,6 +36,9 @@ class VMManager:
                 Takes precedence over session_dir for the repo mount.
             memory: Memory limit for the container (e.g. '4g', '2048m'). Defaults to 4g on
                 apple/container (whose default 1GB is insufficient for Claude Code).
+            extra_env: Project-supplied environment variables (from vibedom.yml 'env:') injected
+                into the container as -e KEY=VALUE. Reserved vibedom vars (proxy/CA/SSH) cannot
+                be overridden and are silently skipped.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
@@ -46,7 +50,39 @@ class VMManager:
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
+        self.extra_env = extra_env or {}
         self._proxy: Optional[ProxyManager] = None
+
+    # Env vars vibedom controls itself — project 'env:' must not override these.
+    RESERVED_ENV = frozenset({
+        'HOST_IP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+        'http_proxy', 'https_proxy', 'no_proxy',
+        'REQUESTS_CA_BUNDLE', 'SSL_CERT_FILE', 'CURL_CA_BUNDLE',
+        'NODE_EXTRA_CA_CERTS', 'SSH_AUTH_SOCK', 'VIBEDOM_HOST_ALIASES',
+        'VIBEDOM_GIT_NAME', 'VIBEDOM_GIT_EMAIL',
+    })
+
+    def _host_git_identity(self) -> tuple[Optional[str], Optional[str]]:
+        """Read the git author identity configured on the host for this workspace.
+
+        Runs ``git -C <workspace> config user.{name,email}``, which resolves the
+        workspace repo's local config and falls back to the host's global config —
+        i.e. exactly who the user would commit as in this repo. Returns
+        ``(name, email)``; either element is None if unset or git is unavailable.
+        """
+        def read(key: str) -> Optional[str]:
+            try:
+                result = subprocess.run(
+                    ['git', '-C', str(self.workspace), 'config', key],
+                    capture_output=True, text=True, check=False,
+                )
+            except FileNotFoundError:
+                return None
+            if result.returncode != 0:
+                return None
+            return (result.stdout or '').strip() or None
+
+        return read('user.name'), read('user.email')
 
     @staticmethod
     def _detect_runtime(runtime: Optional[str] = None) -> tuple[str, str]:
@@ -338,6 +374,26 @@ class VMManager:
                 for hostname, ip in self.host_aliases.items():
                     resolved = proxy_host if ip == 'host' else ip
                     cmd += ['--add-host', f'{hostname}:{resolved}']
+
+        # Lift the host's git identity into the container so agent commits are
+        # authored as the user. startup.sh's ensure_git_identity prefers these
+        # over the 'Vibedom Agent' default when set.
+        git_name, git_email = self._host_git_identity()
+        if git_name:
+            cmd += ['-e', f'VIBEDOM_GIT_NAME={git_name}']
+        if git_email:
+            cmd += ['-e', f'VIBEDOM_GIT_EMAIL={git_email}']
+
+        # Project-supplied env vars (vibedom.yml 'env:'). Reserved vibedom vars
+        # are skipped so a project config can't disable the proxy or CA trust.
+        for key, value in self.extra_env.items():
+            if key in self.RESERVED_ENV:
+                print(
+                    f"Warning: vibedom.yml env '{key}' is reserved by vibedom — ignored.",
+                    file=sys.stderr,
+                )
+                continue
+            cmd += ['-e', f'{key}={value}']
 
         # Claude/OpenCode config - shared persistent volume across all workspaces.
         # apple/container doesn't support named volumes, so use a bind mount instead.

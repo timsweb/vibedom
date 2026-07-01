@@ -514,6 +514,170 @@ def test_vm_start_adds_host_aliases_env_for_apple(tmp_path):
     assert aliases.get('wapi-mysql') == '192.168.64.1'
 
 
+def test_vm_start_passes_extra_env_vars(tmp_path):
+    """start() should pass each extra_env entry as a -e KEY=VALUE flag."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                       runtime='docker',
+                       extra_env={'DB_PORT': 1234, 'DB_HOST': 'host.docker.internal'})
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    # Collect all -e values
+    env_flags = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == '-e' and i + 1 < len(cmd)]
+    assert 'DB_PORT=1234' in env_flags
+    assert 'DB_HOST=host.docker.internal' in env_flags
+
+
+def test_vm_start_extra_env_does_not_override_proxy_vars(tmp_path):
+    """start() should not let extra_env clobber the reserved proxy/CA env vars."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
+                       runtime='docker',
+                       extra_env={'HTTP_PROXY': 'http://evil:9999'})
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    env_flags = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == '-e' and i + 1 < len(cmd)]
+    assert 'HTTP_PROXY=http://evil:9999' not in env_flags
+    assert 'HTTP_PROXY=http://host.docker.internal:54321' in env_flags
+
+
+HOST_GIT_EMAIL = 'jane' + '@' + 'example.com'
+
+
+def test_host_git_identity_reads_workspace_config(tmp_path):
+    """_host_git_identity() should return the name/email git reports for the workspace."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+
+    def fake_run(cmd, *a, **k):
+        if cmd[-1] == 'user.name':
+            return MagicMock(returncode=0, stdout='Jane Dev\n')
+        if cmd[-1] == 'user.email':
+            return MagicMock(returncode=0, stdout=HOST_GIT_EMAIL + '\n')
+        return MagicMock(returncode=1, stdout='')
+
+    with patch('subprocess.run', side_effect=fake_run):
+        name, email = vm._host_git_identity()
+    assert name == 'Jane Dev'
+    assert email == HOST_GIT_EMAIL
+
+
+def test_host_git_identity_returns_none_when_unset(tmp_path):
+    """_host_git_identity() should return (None, None) when git reports no identity."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+
+    with patch('subprocess.run', return_value=MagicMock(returncode=1, stdout='')):
+        name, email = vm._host_git_identity()
+    assert name is None
+    assert email is None
+
+
+def _git_identity_side_effect(name, email):
+    """subprocess.run stub: answer git-config identity reads, succeed for everything else."""
+    def fake_run(cmd, *a, **k):
+        if cmd[:2] == ['git', '-C'] and cmd[-1] == 'user.name':
+            return MagicMock(returncode=(0 if name else 1), stdout=(f'{name}\n' if name else ''))
+        if cmd[:2] == ['git', '-C'] and cmd[-1] == 'user.email':
+            return MagicMock(returncode=(0 if email else 1), stdout=(f'{email}\n' if email else ''))
+        return MagicMock(returncode=0, stdout='')
+    return fake_run
+
+
+def _env_flags(cmd):
+    return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == '-e' and i + 1 < len(cmd)]
+
+
+def test_vm_start_injects_host_git_identity(tmp_path):
+    """start() should inject VIBEDOM_GIT_NAME/EMAIL when the host has an identity."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+        with patch('subprocess.run', side_effect=_git_identity_side_effect('Jane Dev', HOST_GIT_EMAIL)) as mock_run:
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    env_flags = _env_flags(cmd)
+    assert 'VIBEDOM_GIT_NAME=Jane Dev' in env_flags
+    assert f'VIBEDOM_GIT_EMAIL={HOST_GIT_EMAIL}' in env_flags
+
+
+def test_vm_start_omits_git_identity_when_host_has_none(tmp_path):
+    """start() should not inject VIBEDOM_GIT_* when the host has no git identity."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
+        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+
+    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+        mock_proxy = MagicMock()
+        mock_proxy.start.return_value = 54321
+        mock_proxy.ca_cert_path = None
+        mock_proxy_cls.return_value = mock_proxy
+        with patch('subprocess.run', side_effect=_git_identity_side_effect(None, None)) as mock_run:
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
+    cmd = run_calls[0][0][0]
+    env_flags = _env_flags(cmd)
+    assert not any(f.startswith('VIBEDOM_GIT_NAME=') for f in env_flags)
+    assert not any(f.startswith('VIBEDOM_GIT_EMAIL=') for f in env_flags)
+
+
 def test_vm_start_no_host_aliases_adds_no_add_host(tmp_path):
     """start() should not add --add-host flags when host_aliases is empty."""
     workspace = tmp_path / 'myapp'
