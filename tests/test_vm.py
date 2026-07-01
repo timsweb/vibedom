@@ -578,8 +578,8 @@ def test_vm_start_extra_env_does_not_override_proxy_vars(tmp_path):
 HOST_GIT_EMAIL = 'jane' + '@' + 'example.com'
 
 
-def test_host_git_identity_reads_workspace_config(tmp_path):
-    """_host_git_identity() should return the name/email git reports for the workspace."""
+def test_host_git_identity_reads_global_config(tmp_path):
+    """_host_git_identity() should read the host's GLOBAL git identity, not a per-repo override."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
@@ -592,10 +592,15 @@ def test_host_git_identity_reads_workspace_config(tmp_path):
             return MagicMock(returncode=0, stdout=HOST_GIT_EMAIL + '\n')
         return MagicMock(returncode=1, stdout='')
 
-    with patch('subprocess.run', side_effect=fake_run):
+    with patch('subprocess.run', side_effect=fake_run) as mock_run:
         name, email = vm._host_git_identity()
     assert name == 'Jane Dev'
     assert email == HOST_GIT_EMAIL
+    # Must query global scope explicitly, never the workspace-local config.
+    for call in mock_run.call_args_list:
+        cmd = call[0][0]
+        assert '--global' in cmd, f"expected --global in {cmd}"
+        assert '-C' not in cmd, f"unexpected workspace-scoped read in {cmd}"
 
 
 def test_host_git_identity_returns_none_when_unset(tmp_path):
@@ -614,9 +619,9 @@ def test_host_git_identity_returns_none_when_unset(tmp_path):
 def _git_identity_side_effect(name, email):
     """subprocess.run stub: answer git-config identity reads, succeed for everything else."""
     def fake_run(cmd, *a, **k):
-        if cmd[:2] == ['git', '-C'] and cmd[-1] == 'user.name':
+        if cmd[:3] == ['git', 'config', '--global'] and cmd[-1] == 'user.name':
             return MagicMock(returncode=(0 if name else 1), stdout=(f'{name}\n' if name else ''))
-        if cmd[:2] == ['git', '-C'] and cmd[-1] == 'user.email':
+        if cmd[:3] == ['git', 'config', '--global'] and cmd[-1] == 'user.email':
             return MagicMock(returncode=(0 if email else 1), stdout=(f'{email}\n' if email else ''))
         return MagicMock(returncode=0, stdout='')
     return fake_run

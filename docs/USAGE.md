@@ -119,7 +119,7 @@ sync_exclude:                     # extra excludes on top of .gitignore
 
 ### Git identity
 
-Your host git identity is lifted into the container automatically. On container creation, vibedom reads `git config user.name` / `user.email` from your workspace directory (respecting a per-repo override, falling back to your global config) and uses it as the container's git identity, so agent commits are authored as you. If the host has no identity configured, commits fall back to the default `Vibedom Agent`. You can still override explicitly with `GIT_AUTHOR_*`/`GIT_COMMITTER_*` under `env:` or a `git config` command under `setup:`; both take precedence over the lifted identity.
+Your host git identity is lifted into the container automatically. On container creation, vibedom reads your **global** identity (`git config --global user.name` / `user.email`) and sets it as the container's global git identity, so agent commits are authored as you. Per-repo overrides on the host are intentionally not consulted — this mirrors your machine-wide identity. If the host has no global identity configured, commits fall back to the default `Vibedom Agent`. You can still override explicitly with `GIT_AUTHOR_*`/`GIT_COMMITTER_*` under `env:` or a `git config` command under `setup:`; both take precedence over the lifted identity.
 
 > **apple/container:** The `network:` field is not supported. Expose services on the host and connect via `host.docker.internal`. Vibedom will warn and ignore the setting.
 

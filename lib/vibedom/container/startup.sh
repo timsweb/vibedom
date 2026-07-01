@@ -9,10 +9,10 @@ echo "Starting vibedom VM..."
 # name/email back to "Vibedom Agent" after each `vibedom up`/restart.
 ensure_git_identity() {
     if ! git config user.name >/dev/null 2>&1; then
-        git config user.name "${VIBEDOM_GIT_NAME:-Vibedom Agent}"
+        git config --global user.name "${VIBEDOM_GIT_NAME:-Vibedom Agent}"
     fi
     if ! git config user.email >/dev/null 2>&1; then
-        git config user.email "${VIBEDOM_GIT_EMAIL:-[REDACTED_EMAIL]}"
+        git config --global user.email "${VIBEDOM_GIT_EMAIL:-[REDACTED_EMAIL]}"
     fi
 }
 

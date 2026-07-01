@@ -63,17 +63,18 @@ class VMManager:
     })
 
     def _host_git_identity(self) -> tuple[Optional[str], Optional[str]]:
-        """Read the git author identity configured on the host for this workspace.
+        """Read the host's global git author identity.
 
-        Runs ``git -C <workspace> config user.{name,email}``, which resolves the
-        workspace repo's local config and falls back to the host's global config —
-        i.e. exactly who the user would commit as in this repo. Returns
-        ``(name, email)``; either element is None if unset or git is unavailable.
+        Runs ``git config --global user.{name,email}`` — the machine-wide identity
+        the user commits as, mirrored into the container's global config by
+        startup.sh. Per-repo (local) overrides are intentionally not consulted.
+        Returns ``(name, email)``; either element is None if unset or git is
+        unavailable.
         """
         def read(key: str) -> Optional[str]:
             try:
                 result = subprocess.run(
-                    ['git', '-C', str(self.workspace), 'config', key],
+                    ['git', 'config', '--global', key],
                     capture_output=True, text=True, check=False,
                 )
             except FileNotFoundError:
