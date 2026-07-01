@@ -6,6 +6,7 @@ import shutil
 from unittest.mock import patch, MagicMock
 from vibedom.vm import VMManager
 from vibedom.session import Session
+from vibedom.project_config import Mount
 
 @pytest.fixture
 def test_workspace():
@@ -844,3 +845,69 @@ def test_vm_start_mounts_repo_from_container_dir(tmp_path):
     cmd = ' '.join(run_calls[0][0][0])
     assert str(container_dir / 'repo') in cmd
     assert ':/work/repo' in cmd
+
+
+def _run_argv(mock_run):
+    """Extract the container-runtime 'run' argv from a patched subprocess.run."""
+    return next(c[0][0] for c in mock_run.call_args_list if 'run' in c[0][0])
+
+
+def test_start_with_live_mounts_emits_rw_and_ro(test_config, tmp_path):
+    """With mounts set, start() bind-mounts each dir at /work/<name>, honoring ro,
+    and omits the read-only workspace mount and the /work/repo copy."""
+    www = tmp_path / 'www'
+    www.mkdir()
+    shared = tmp_path / 'shared'
+    shared.mkdir()
+    mounts = [
+        Mount(host_path=www, name='www', read_only=False),
+        Mount(host_path=shared, name='shared', read_only=True),
+    ]
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(www, test_config, container_dir=tmp_path / 'cdir', mounts=mounts)
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    cmd = _run_argv(mock_run)
+    assert 'VIBEDOM_LIVE=1' in cmd
+    assert f'{www}:/work/www' in cmd
+    assert f'{shared}:/work/shared:ro' in cmd
+    assert not any(':/mnt/workspace:ro' in a for a in cmd)
+    assert not any(a.endswith(':/work/repo') for a in cmd)
+
+
+def test_start_without_mounts_still_mounts_workspace_ro(test_workspace, test_config, tmp_path):
+    """With no mounts, start() keeps the read-only workspace mount (unchanged)."""
+    with patch('shutil.which') as mock_which:
+        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
+        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
+            mock_proxy = MagicMock()
+            mock_proxy.start.return_value = 54321
+            mock_proxy.ca_cert_path = None
+            mock_proxy_cls.return_value = mock_proxy
+            with patch('shutil.copy'):
+                try:
+                    vm.start()
+                except RuntimeError:
+                    pass
+
+    cmd = _run_argv(mock_run)
+    assert f'{test_workspace}:/mnt/workspace:ro' in cmd
+    assert any(a.endswith(':/work/repo') for a in cmd)
+    assert 'VIBEDOM_LIVE=1' not in cmd

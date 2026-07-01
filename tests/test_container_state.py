@@ -140,3 +140,29 @@ def test_container_registry_find_by_workspace_path(tmp_path):
     found = registry.find(str(workspace))
     assert found is not None
     assert found.workspace == str(workspace)
+
+
+def test_create_defaults_live_false(tmp_path):
+    state = ContainerState.create(tmp_path / 'myapp', 'docker')
+    assert state.live is False
+
+
+def test_create_live_roundtrips(tmp_path):
+    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=True)
+    state.save(tmp_path)
+    reloaded = ContainerState.load(tmp_path)
+    assert reloaded.live is True
+
+
+def test_load_legacy_json_without_live(tmp_path):
+    """A container.json written before the `live` field loads with live=False."""
+    (tmp_path / 'container.json').write_text(json.dumps({
+        'workspace': str(tmp_path / 'myapp'),
+        'container_name': 'vibedom-myapp',
+        'runtime': 'docker',
+        'created_at': '2026-01-01T00:00:00',
+        'repo_dir': str(tmp_path / 'repo'),
+        'status': 'stopped',
+    }))
+    state = ContainerState.load(tmp_path)
+    assert state.live is False

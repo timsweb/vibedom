@@ -26,9 +26,10 @@ class ContainerState:
     status: str           # 'running' | 'stopped'
     proxy_port: Optional[int] = None
     proxy_pid: Optional[int] = None
+    live: bool = False
 
     @classmethod
-    def create(cls, workspace: Path, runtime: str) -> 'ContainerState':
+    def create(cls, workspace: Path, runtime: str, live: bool = False) -> 'ContainerState':
         """Create a new ContainerState for a fresh container."""
         workspace = workspace.resolve()
         name = workspace.name
@@ -41,6 +42,7 @@ class ContainerState:
             created_at=datetime.now().isoformat(timespec='seconds'),
             repo_dir=str(repo_dir),
             status='stopped',
+            live=live,
         )
 
     @classmethod

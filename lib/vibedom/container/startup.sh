@@ -16,50 +16,64 @@ ensure_git_identity() {
     fi
 }
 
-# Initialize git repository from workspace (skip if already initialized)
-if [ -d /work/repo/.git ]; then
-    echo "Existing repo found at /work/repo, skipping clone"
-    cd /work/repo
-elif [ -d /mnt/workspace/.git ]; then
-    echo "Cloning git repository from workspace..."
-    git clone /mnt/workspace/.git /work/repo
-    cd /work/repo
+WORK_DIR="${WORK_DIR:-/work}"
+REPO_DIR="${REPO_DIR:-/work/repo}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-/mnt/workspace}"
 
-    # Checkout the same branch user is on
-    CURRENT_BRANCH=$(git -C /mnt/workspace rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-    echo "Detected branch: $CURRENT_BRANCH"
-
-    # Checkout branch (create if doesn't exist locally)
-    if git show-ref --verify --quiet refs/heads/"$CURRENT_BRANCH"; then
-        git checkout "$CURRENT_BRANCH"
-    else
-        git checkout -b "$CURRENT_BRANCH"
+# Prepare the working tree. In live-mount mode (VIBEDOM_LIVE) the real project
+# dir(s) are bind-mounted under $WORK_DIR, so there is nothing to clone or init.
+init_repo() {
+    if [ -n "$VIBEDOM_LIVE" ]; then
+        echo "Live mount mode: using mounted project(s) directly"
+        cd "$WORK_DIR"
+        return
     fi
 
-    echo "Working on branch: $CURRENT_BRANCH"
+    if [ -d "$REPO_DIR/.git" ]; then
+        echo "Existing repo found at $REPO_DIR, skipping clone"
+        cd "$REPO_DIR"
+    elif [ -d "$WORKSPACE_DIR/.git" ]; then
+        echo "Cloning git repository from workspace..."
+        git clone "$WORKSPACE_DIR/.git" "$REPO_DIR"
+        cd "$REPO_DIR"
 
-    # Copy .env* files from workspace (typically gitignored but needed at runtime)
-    for env_file in /mnt/workspace/.env /mnt/workspace/.env.*; do
-        [ -f "$env_file" ] && cp "$env_file" /work/repo/ && echo "Copied $(basename $env_file)"
-    done
-else
-    echo "Non-git workspace, initializing fresh repository..."
-    mkdir -p /work/repo
-    rsync -a --exclude='.git' /mnt/workspace/ /work/repo/ || true
-    cd /work/repo
-    git init
+        # Checkout the same branch user is on
+        CURRENT_BRANCH=$(git -C "$WORKSPACE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+        echo "Detected branch: $CURRENT_BRANCH"
 
-    # Set a default identity so the initial snapshot commit succeeds
-    ensure_git_identity
+        if git show-ref --verify --quiet refs/heads/"$CURRENT_BRANCH"; then
+            git checkout "$CURRENT_BRANCH"
+        else
+            git checkout -b "$CURRENT_BRANCH"
+        fi
 
-    git add .
-    git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
-fi
+        echo "Working on branch: $CURRENT_BRANCH"
+
+        # Copy .env* files from workspace (typically gitignored but needed at runtime)
+        for env_file in "$WORKSPACE_DIR"/.env "$WORKSPACE_DIR"/.env.*; do
+            [ -f "$env_file" ] && cp "$env_file" "$REPO_DIR"/ && echo "Copied $(basename $env_file)"
+        done
+    else
+        echo "Non-git workspace, initializing fresh repository..."
+        mkdir -p "$REPO_DIR"
+        rsync -a --exclude='.git' "$WORKSPACE_DIR"/ "$REPO_DIR"/ || true
+        cd "$REPO_DIR"
+        git init
+
+        # Set a default identity so the initial snapshot commit succeeds
+        ensure_git_identity
+
+        git add .
+        git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
+    fi
+}
+
+init_repo
 
 # Apply the default agent identity only if the user has not set their own
 ensure_git_identity
 
-echo "Git repository initialized at /work/repo"
+echo "Git repository initialized at $WORK_DIR"
 
 # Restore Claude config from persistent volume
 # Claude Code writes to /root/.claude.json via atomic rename, which breaks symlinks.

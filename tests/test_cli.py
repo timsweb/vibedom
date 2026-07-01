@@ -5,6 +5,85 @@ import subprocess
 from unittest.mock import patch, MagicMock
 from click.testing import CliRunner
 from vibedom.cli import main
+from vibedom.container_state import ContainerState
+
+
+def test_up_live_mounts_passes_mounts_and_persists_live(tmp_path):
+    """up with a mounts: config passes normalized mounts to VMManager and marks the
+    container live; it does not scan or mount a /work/repo copy."""
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    target = tmp_path / 'www'
+    target.mkdir()
+    (proj / 'vibedom.yml').write_text(f'mounts:\n  - {target}\n')
+
+    home = tmp_path / 'home'
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm = MagicMock()
+                    mock_vm.is_running.return_value = False
+                    mock_vm.exists.return_value = False
+                    mock_vm._proxy = MagicMock(port=54321, pid=99999)
+                    mock_vm_cls.return_value = mock_vm
+                    result = runner.invoke(main, ['up', str(proj)], catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    _, kwargs = mock_vm_cls.call_args
+    mounts = kwargs['mounts']
+    assert [(m.name, m.read_only) for m in mounts] == [('www', False)]
+
+    state = ContainerState.load(home / '.vibedom' / 'containers' / 'agent')
+    assert state.live is True
+
+
+def test_up_live_mount_missing_dir_fails_fast(tmp_path):
+    """up rejects a mounts: entry whose path is not a directory, before creating anything."""
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    missing = tmp_path / 'does-not-exist'
+    (proj / 'vibedom.yml').write_text(f'mounts:\n  - {missing}\n')
+
+    home = tmp_path / 'home'
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+            result = runner.invoke(main, ['up', str(proj)], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert 'not a directory' in result.output
+    # Validation runs before the container is constructed
+    mock_vm_cls.assert_not_called()
+
+
+def test_up_already_running_live_container_shows_live_note_not_repo_path(tmp_path):
+    """The already-running branch must not print a misleading Repo: copy path for live containers."""
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    home = tmp_path / 'home'
+    cdir = home / '.vibedom' / 'containers' / 'agent'
+    cdir.mkdir(parents=True)
+    state = ContainerState.create(proj, 'docker', live=True)
+    state.status = 'running'
+    state.save(cdir)
+
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli._ensure_proxy_running'):
+            with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                mock_vm = MagicMock()
+                mock_vm.is_running.return_value = True
+                mock_vm_cls.return_value = mock_vm
+                result = runner.invoke(main, ['up', str(proj)], catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    assert 'Live-mount container' in result.output
+    assert 'Repo:' not in result.output
 
 def test_cli_shows_help():
     """CLI should show help message when invoked with --help"""
@@ -959,3 +1038,45 @@ def test_proxy_restart_container_not_running(tmp_path):
     assert result.exit_code == 1
     assert 'not running' in result.output.lower()
     mock_pm.assert_not_called()
+
+
+def test_shell_live_container_uses_work_dir(tmp_path):
+    """shell into a live container opens /work, not /work/repo."""
+    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=True)
+    state.status = 'running'
+
+    runner = CliRunner()
+    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
+        mock_registry = MagicMock()
+        mock_registry.find.return_value = state
+        mock_registry_cls.return_value = mock_registry
+        with patch('vibedom.cli._ensure_proxy_running'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                result = runner.invoke(main, ['shell', 'myapp'], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    cmd = mock_run.call_args[0][0]
+    assert '-w' in cmd
+    assert cmd[cmd.index('-w') + 1] == '/work'
+
+
+def test_shell_non_live_container_uses_work_repo_dir(tmp_path):
+    """shell into a non-live container opens /work/repo (default behavior)."""
+    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=False)
+    state.status = 'running'
+
+    runner = CliRunner()
+    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
+        mock_registry = MagicMock()
+        mock_registry.find.return_value = state
+        mock_registry_cls.return_value = mock_registry
+        with patch('vibedom.cli._ensure_proxy_running'):
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                result = runner.invoke(main, ['shell', 'myapp'], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    cmd = mock_run.call_args[0][0]
+    assert '-w' in cmd
+    assert cmd[cmd.index('-w') + 1] == '/work/repo'

@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from vibedom.project_config import ProjectConfig
+from vibedom.project_config import ProjectConfig, Mount
 
 
 def test_project_config_loads_base_image(tmp_path):
@@ -110,3 +110,56 @@ def test_project_config_env_defaults_to_none(tmp_path):
     (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
     config = ProjectConfig.load(tmp_path)
     assert config.env is None
+
+
+def test_mounts_defaults_to_none(tmp_path):
+    """mounts is optional and defaults to None."""
+    (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.mounts is None
+
+
+def test_mounts_scalar_entry_is_rw(tmp_path):
+    """A scalar entry mounts read-write; name is the basename."""
+    target = tmp_path / 'www'
+    target.mkdir()
+    (tmp_path / 'vibedom.yml').write_text(f'mounts:\n  - {target}\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.mounts == [Mount(host_path=target.resolve(), name='www', read_only=False)]
+
+
+def test_mounts_dot_resolves_to_config_dir(tmp_path):
+    """'.' resolves to the directory containing vibedom.yml."""
+    (tmp_path / 'vibedom.yml').write_text('mounts:\n  - .\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config.mounts == [Mount(host_path=tmp_path.resolve(), name=tmp_path.name, read_only=False)]
+
+
+def test_mounts_mapping_with_alias_and_ro(tmp_path):
+    """Mapping form supports 'as' and 'ro'."""
+    target = tmp_path / 'shared-libs'
+    target.mkdir()
+    (tmp_path / 'vibedom.yml').write_text(
+        f'mounts:\n  - path: {target}\n    as: shared\n    ro: true\n'
+    )
+    config = ProjectConfig.load(tmp_path)
+    assert config.mounts == [Mount(host_path=target.resolve(), name='shared', read_only=True)]
+
+
+def test_mounts_duplicate_name_raises(tmp_path):
+    """Two entries resolving to the same name is a config error."""
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    (tmp_path / 'vibedom.yml').write_text(
+        f'mounts:\n  - path: {tmp_path / "a"}\n    as: dup\n'
+        f'  - path: {tmp_path / "b"}\n    as: dup\n'
+    )
+    with pytest.raises(ValueError, match='Duplicate mount name'):
+        ProjectConfig.load(tmp_path)
+
+
+def test_mounts_mapping_missing_path_raises(tmp_path):
+    """A mapping entry without 'path' is a config error."""
+    (tmp_path / 'vibedom.yml').write_text('mounts:\n  - as: oops\n')
+    with pytest.raises(ValueError, match="missing 'path'"):
+        ProjectConfig.load(tmp_path)

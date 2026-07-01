@@ -667,3 +667,37 @@ def test_force_skips_full_tree_confirmation(sync_env):
     assert result.exit_code == 0
     rsync_calls = [c for c in mock_run.call_args_list if 'rsync' in str(c)]
     assert rsync_calls
+
+
+def test_pull_noop_for_live_container(sync_env):
+    """pull on a live-mount container does no rsync."""
+    sync_env['state'].live = True
+    runner = CliRunner()
+    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
+        mock_registry = MagicMock()
+        mock_registry.find.return_value = sync_env['state']
+        mock_registry_cls.return_value = mock_registry
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(main, ['pull', 'myapp', '--yes'], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert 'no sync needed' in result.output
+    assert not any('rsync' in str(c) for c in mock_run.call_args_list)
+
+
+def test_push_noop_for_live_container(sync_env):
+    """push on a live-mount container does no rsync."""
+    sync_env['state'].live = True
+    runner = CliRunner()
+    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
+        mock_registry = MagicMock()
+        mock_registry.find.return_value = sync_env['state']
+        mock_registry_cls.return_value = mock_registry
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            result = runner.invoke(main, ['push', 'myapp', '--yes'], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert 'no sync needed' in result.output
+    assert not any('rsync' in str(c) for c in mock_run.call_args_list)

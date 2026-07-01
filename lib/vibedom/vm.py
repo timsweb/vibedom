@@ -20,6 +20,7 @@ class VMManager:
                  host_aliases: Optional[dict] = None,
                  container_dir: Optional[Path] = None,
                  memory: Optional[str] = None,
+                 mounts: Optional[list] = None,
                  extra_env: Optional[dict] = None):
         """Initialize VM manager.
 
@@ -39,6 +40,10 @@ class VMManager:
             extra_env: Project-supplied environment variables (from vibedom.yml 'env:') injected
                 into the container as -e KEY=VALUE. Reserved vibedom vars (proxy/CA/SSH) cannot
                 be overridden and are silently skipped.
+            mounts: Optional list of Mount(host_path, name, read_only). When set, the container
+                runs in live-mount mode: each host_path is bind-mounted at /work/<name> (read-only
+                when read_only is set) and VIBEDOM_LIVE=1 is exported, replacing the read-only
+                /mnt/workspace mount and the /work/repo copy. When None, the copy+sync model is used.
         """
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
@@ -47,6 +52,7 @@ class VMManager:
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.memory = memory
+        self.mounts = mounts
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
@@ -336,19 +342,30 @@ class VMManager:
             # git falls back to prompting for credentials.
             '-e', 'SSH_AUTH_SOCK=/tmp/ssh-agent.sock',
             # Mounts
-            '-v', f'{self.workspace}:/mnt/workspace:ro',
             '-v', f'{self.config_dir}:/mnt/config:ro',
         ]
 
-        # Repo mount: prefer container_dir (persistent), fall back to session_dir (legacy)
-        if self.container_dir:
-            repo_dir = self.container_dir / 'repo'
-            repo_dir.mkdir(parents=True, exist_ok=True)
-            cmd += ['-v', f'{repo_dir}:/work/repo']
-        elif self.session_dir:
-            repo_dir = self.session_dir / 'repo'
-            repo_dir.mkdir(parents=True, exist_ok=True)
-            cmd += ['-v', f'{repo_dir}:/work/repo']
+        if self.mounts:
+            # Live mode: bind-mount the real project dir(s) directly. No read-only
+            # workspace mount and no synced /work/repo copy. startup.sh detects
+            # this via VIBEDOM_LIVE and skips the clone/init step.
+            cmd += ['-e', 'VIBEDOM_LIVE=1']
+            for m in self.mounts:
+                spec = f'{m.host_path}:/work/{m.name}'
+                if m.read_only:
+                    spec += ':ro'
+                cmd += ['-v', spec]
+        else:
+            cmd += ['-v', f'{self.workspace}:/mnt/workspace:ro']
+            # Repo mount: prefer container_dir (persistent), fall back to session_dir (legacy)
+            if self.container_dir:
+                repo_dir = self.container_dir / 'repo'
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                cmd += ['-v', f'{repo_dir}:/work/repo']
+            elif self.session_dir:
+                repo_dir = self.session_dir / 'repo'
+                repo_dir.mkdir(parents=True, exist_ok=True)
+                cmd += ['-v', f'{repo_dir}:/work/repo']
 
         if self.session_dir:
             cmd += ['-v', f'{self.session_dir}:/mnt/session']

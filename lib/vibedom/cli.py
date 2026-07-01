@@ -910,6 +910,15 @@ def up(workspace, runtime):
         sys.exit(1)
 
     project_config = ProjectConfig.load(workspace_path)
+    mounts = project_config.mounts if project_config else None
+    if mounts:
+        for m in mounts:
+            if not m.host_path.is_dir():
+                click.secho(
+                    f"Error: mount path is not a directory: {m.host_path}", fg='red'
+                )
+                sys.exit(1)
+
     registry = ContainerRegistry(containers_dir)
     container_state = registry.find(workspace_path.name)
 
@@ -922,20 +931,26 @@ def up(workspace, runtime):
         host_aliases=project_config.host_aliases if project_config else None,
         memory=project_config.memory if project_config else None,
         extra_env=project_config.env if project_config else None,
+        mounts=mounts,
     )
 
     if vm.is_running():
         click.echo(f"Container '{vm.container_name}' is already running.")
         if container_state:
             _ensure_proxy_running(container_state, container_dir, config_dir)
-        click.echo(f"Repo: {container_dir / 'repo'}")
+        if container_state and container_state.live:
+            click.echo("Live-mount container — files are shared with your host.")
+        else:
+            click.echo(f"Repo: {container_dir / 'repo'}")
         return
 
     if vm.exists():
         # Container stopped — restart proxy then container
         click.echo(f"Restarting container '{vm.container_name}'...")
         if container_state is None:
-            container_state = ContainerState.create(workspace_path, resolved_runtime)
+            container_state = ContainerState.create(
+                workspace_path, resolved_runtime, live=bool(mounts)
+            )
         proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
         try:
             proxy.start(port=container_state.proxy_port)
@@ -963,7 +978,12 @@ def up(workspace, runtime):
     else:
         # First-time creation
         click.echo("Scanning for secrets...")
-        findings = scan_workspace(workspace_path)
+        if mounts:
+            findings = []
+            for m in mounts:
+                findings.extend(scan_workspace(m.host_path))
+        else:
+            findings = scan_workspace(workspace_path)
         if not review_findings(findings):
             click.secho("Cancelled", fg='yellow')
             sys.exit(1)
@@ -975,7 +995,9 @@ def up(workspace, runtime):
             click.secho(f"Error: {e}", fg='red')
             sys.exit(1)
 
-        container_state = ContainerState.create(workspace_path, resolved_runtime)
+        container_state = ContainerState.create(
+            workspace_path, resolved_runtime, live=bool(mounts)
+        )
         if vm._proxy:
             container_state.mark_running(vm._proxy.port, vm._proxy.pid, container_dir)
         else:
@@ -990,16 +1012,27 @@ def up(workspace, runtime):
                 if result.returncode != 0:
                     click.secho(f"  Warning: setup command failed: {result.stderr}", fg='yellow')
 
-    click.echo(f"\nContainer running!")
-    click.echo(f"Workspace: {workspace_path}")
-    click.echo(f"Repo: {container_dir / 'repo'}")
-    click.echo(f"\nTo sync code:")
-    click.echo(f"  vibedom pull {workspace_path.name}   # container -> host")
-    click.echo(f"  vibedom push {workspace_path.name}   # host -> container")
-    click.echo(f"\nTo open a shell:")
-    click.echo(f"  vibedom shell {workspace_path.name}")
-    click.echo(f"\nTo stop:")
-    click.echo(f"  vibedom down {workspace_path.name}")
+    if mounts:
+        click.echo(f"\nContainer running (live mount)!")
+        click.echo("Mounted:")
+        for m in mounts:
+            ro = ' (ro)' if m.read_only else ''
+            click.echo(f"  {m.host_path} -> /work/{m.name}{ro}")
+        click.echo(f"\nTo open a shell:")
+        click.echo(f"  vibedom shell {workspace_path.name}")
+        click.echo(f"\nTo stop:")
+        click.echo(f"  vibedom down {workspace_path.name}")
+    else:
+        click.echo(f"\nContainer running!")
+        click.echo(f"Workspace: {workspace_path}")
+        click.echo(f"Repo: {container_dir / 'repo'}")
+        click.echo(f"\nTo sync code:")
+        click.echo(f"  vibedom pull {workspace_path.name}   # container -> host")
+        click.echo(f"  vibedom push {workspace_path.name}   # host -> container")
+        click.echo(f"\nTo open a shell:")
+        click.echo(f"  vibedom shell {workspace_path.name}")
+        click.echo(f"\nTo stop:")
+        click.echo(f"  vibedom down {workspace_path.name}")
 
 
 @main.command()
@@ -1178,7 +1211,8 @@ def shell_cmd(workspace):
     _ensure_proxy_running(container_state, container_dir, config_dir)
 
     runtime_cmd = 'container' if container_state.runtime == 'apple' else 'docker'
-    cmd = [runtime_cmd, 'exec', '-it', '-w', '/work/repo',
+    workdir = '/work' if container_state.live else '/work/repo'
+    cmd = [runtime_cmd, 'exec', '-it', '-w', workdir,
            container_state.container_name, 'bash', '--login']
     try:
         subprocess.run(cmd)
@@ -1334,6 +1368,13 @@ def pull(workspace, paths, delete, dry_run, yes, force):
         click.secho(f"No container found for '{workspace}'.", fg='red')
         sys.exit(1)
 
+    if container_state.live:
+        click.echo(
+            "This is a live-mount container — changes are already on your host; "
+            "no sync needed."
+        )
+        return
+
     workspace_path = Path(container_state.workspace)
     container_dir = containers_dir / workspace_path.name
     repo_dir = container_dir / 'repo'
@@ -1414,6 +1455,13 @@ def push(workspace, paths, delete, dry_run, yes, force):
     if container_state is None:
         click.secho(f"No container found for '{workspace}'.", fg='red')
         sys.exit(1)
+
+    if container_state.live:
+        click.echo(
+            "This is a live-mount container — changes are already on your host; "
+            "no sync needed."
+        )
+        return
 
     workspace_path = Path(container_state.workspace)
     container_dir = containers_dir / workspace_path.name
