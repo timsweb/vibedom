@@ -47,6 +47,12 @@ Vibedom supports two container models:
 - Agent workspace at `/work/repo` (bind-mounted from host — persists for persistent containers)
 - Explicit proxy via `HTTP_PROXY`/`HTTPS_PROXY` environment variables
 
+##### Live-mount mode (`mounts:` in `vibedom.yml`)
+- Opt-in alternative to the copy+sync layout above. Each entry bind-mounts a host directory live at `/work/<name>` (read-write, or read-only with `ro: true`); `VIBEDOM_LIVE=1` is set so `startup.sh` skips clone/init.
+- Replaces the read-only `/mnt/workspace` mount and the `/work/repo` copy — the agent edits real files directly, so no sync is needed (`pull`/`push` no-op, `vibedom shell` opens `/work`).
+- Entry forms: scalar `- <path>` (→ `/work/<basename>`, rw) or mapping `- {path:, as:, ro:}`; `.`/relative resolve against the `vibedom.yml` dir. Parsed into `Mount(host_path, name, read_only)` by `project_config.py`.
+- One container can span multiple projects (each at `/work/<name>`), all sharing the same `base_image`. Trades the read-only-original protection for git-based safety; network/DLP and pre-flight secret scanning (run per mount) are unchanged.
+
 ### Network Layer
 - mitmproxy in explicit proxy mode (`HTTP_PROXY`/`HTTPS_PROXY`)
 - One host-side proxy process per container, on an OS-assigned port
@@ -56,6 +62,7 @@ Vibedom supports two container models:
 - Proxy auto-restarts on `vibedom up`/`vibedom shell` if PID is dead
 
 ### Sync Layer
+- Applies to copy+sync containers only — live-mount containers (`mounts:`) share files directly, so `pull`/`push` short-circuit with a no-op message
 - Host-side rsync between `~/.vibedom/containers/{name}/repo/` and the workspace
 - No docker exec needed — the repo dir is a bind mount visible on both sides
 - `.gitignore` rules applied automatically via `--filter=':- .gitignore'`

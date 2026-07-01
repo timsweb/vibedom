@@ -83,7 +83,7 @@ Persistent containers stay alive across multiple tasks. The container filesystem
 vibedom up ~/projects/myapp
 ```
 
-- **First run**: scans for secrets, builds image, clones repo into container
+- **First run**: scans for secrets, builds image, clones repo into container (live-mount containers bind-mount your dirs instead of cloning — see [Live Mount Mode](#live-mount-mode-mounts))
 - **After `vibedom down`**: restarts the existing container (no re-clone, environment preserved)
 - **After a reboot**: container is in a stopped state — `vibedom up` restarts it, same as after `vibedom down`
 - **Container missing** (e.g. manually deleted): recreates using existing repo data — no secret scan, no re-clone, no setup re-run
@@ -111,6 +111,13 @@ setup:
 sync_exclude:                     # extra excludes on top of .gitignore
   - storage/logs/
   - bootstrap/cache/
+
+mounts:                           # live bind-mount dirs instead of copy+sync (see below)
+  - .                             #   this project → /work/<project-name>
+  - ~/projects/api                #   another project → /work/api
+  - path: ~/projects/shared-libs  #   mapping form: rename and/or make read-only
+    as: shared                    #   → /work/shared
+    ro: true                      #   read-only mount
 ```
 
 `setup:` commands run once when the container is first created, not on subsequent restarts. Packages installed during setup persist in the container.
@@ -123,7 +130,53 @@ Your host git identity is lifted into the container automatically. On container 
 
 > **apple/container:** The `network:` field is not supported. Expose services on the host and connect via `host.docker.internal`. Vibedom will warn and ignore the setting.
 
+### Live Mount Mode (mounts:)
+
+By default a container works on a **copy** of your repo and you move changes with `vibedom pull`/`push` (see [Syncing Code](#syncing-code)). If you'd rather the agent edit your real files directly — and give a single container access to several projects at once — add a `mounts:` list. When `mounts:` is present, vibedom bind-mounts those host directories **live** into the container instead of cloning and syncing.
+
+**Path options** — each entry maps a host directory to `/work/<name>`:
+
+```yaml
+mounts:
+  - .                             # scalar: this project, live at /work/<project-name>
+  - ~/projects/api                # scalar: → /work/api (name = basename)
+  - path: ~/projects/legacy-src   # mapping: rename to avoid a name clash
+    as: legacy                    #   → /work/legacy
+  - path: ~/projects/shared-libs  # mapping: read-only reference material
+    as: shared
+    ro: true                      #   → /work/shared (read-only)
+```
+
+- **Scalar** (`- <path>`): bind-mounted read-write at `/work/<basename>`. Use `- .` for a single project whose `vibedom.yml` lives in its root.
+- **Mapping** (`- {path:, as:, ro:}`): `path` is required; `as` overrides the `/work/<name>` subdirectory (needed when two dirs share a basename); `ro: true` mounts read-only (good for shared libraries the agent should read but not modify).
+- `~` and relative paths resolve against the directory containing `vibedom.yml`; `.` is that directory itself.
+- The directory you pass to `vibedom up` names the container but is **not** auto-mounted — list it (e.g. `- .`) if you want it mounted. `mounts:` is the complete list.
+
+**What changes in live mode:**
+- **No copy, no sync.** The agent edits your real files directly; `vibedom pull`/`push` are unnecessary and become no-ops.
+- **`vibedom shell` opens `/work`** (the parent of all mounts) instead of `/work/repo`.
+- **Git is your safety net**, not the read-only-original protection of copy mode — agent commits land on your actual checked-out branch(es). Use branches/commits to stay safe, and treat it as "hand the project(s) to the agent" rather than editing the same tree simultaneously.
+- **Secret scanning and network/DLP isolation are unchanged** — every mount (including `ro:` ones) is gitleaks-scanned before start, and all traffic still goes through the whitelisting/DLP proxy.
+
+**Multi-project example** — one "agent container" spanning a backend and frontend:
+
+```yaml
+# ~/projects/agent/vibedom.yml
+base_image: my-php-fpm:latest
+mounts:
+  - ~/projects/api
+  - ~/projects/frontend
+```
+```bash
+vibedom up ~/projects/agent    # /work/api and /work/frontend are both live
+vibedom shell agent            # opens /work; both projects are subdirectories
+```
+
+> **One container = one base image.** All mounted projects share the container's `base_image` (and therefore its language/PHP version). Group projects that need different PHP versions into separate containers, or use a base image that provides multiple versions.
+
 ### Syncing Code
+
+> Live-mount containers (those with a `mounts:` list) skip this entirely — their files are already shared with the host, and `pull`/`push` are no-ops. Syncing applies to the default copy-based workflow below.
 
 Changes made by the agent inside the container don't automatically appear on the host, and vice versa. Use explicit sync commands:
 
@@ -167,7 +220,7 @@ vibedom shell myapp
 vibedom shell
 ```
 
-This opens a bash shell at `/work/repo` inside the container, where Claude Code is pre-installed and authenticated.
+This opens a bash shell at `/work/repo` inside the container, where Claude Code is pre-installed and authenticated. For [live-mount containers](#live-mount-mode-mounts) the shell opens at `/work` instead, with each mounted project as a subdirectory.
 
 ### Checking Status
 

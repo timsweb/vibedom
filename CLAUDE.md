@@ -56,7 +56,11 @@
 - Persistent: `vibedom up/down` — container survives across tasks (including reboots — stopped, not removed), repo bind-mounted from `~/.vibedom/containers/{name}/repo/`, sync via rsync
 - Ephemeral: `vibedom run/stop` — fresh container per task, repo cloned on start, changes extracted as git bundle on stop
 
-**Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists
+**Two filesystem models for persistent containers**: copy+sync (default) and live-mount (opt-in via `mounts:`)
+- Copy+sync (default): read-only `/mnt/workspace` + repo copy at `/work/repo`, moved with `pull`/`push`
+- Live-mount (`mounts:` in `vibedom.yml`): host dirs bind-mounted live (rw or `:ro`) at `/work/<name>`, `VIBEDOM_LIVE=1` set, no `/mnt/workspace`/`/work/repo` copy, no sync. One container can span several projects (each at `/work/<name>`). Trades the read-only-original protection for direct edits (git is the safety net); network/DLP and secret scanning are unchanged. `vibedom shell` opens `/work`; `pull`/`push` no-op. All mounts share one `base_image`.
+
+**Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists (and skips clone/init entirely when `VIBEDOM_LIVE` is set)
 - Enables container restart without re-cloning
 - SSH agent socket check prevents duplicate agents on restart
 
@@ -86,7 +90,7 @@
 ### Persistent Container Workflow (Primary)
 
 **Setup (once per project):**
-- Add `vibedom.yml` with `base_image`, `network`, `setup` commands, `sync_exclude`
+- Add `vibedom.yml` with `base_image`, `network`, `setup` commands, `sync_exclude`, `env`, `mounts` (live bind-mounts)
 - `vibedom up ~/projects/myapp` — creates container, runs setup commands
 
 **Iterative development:**
@@ -412,7 +416,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 ### Current Security Model
 
 - **VM isolation**: Agent cannot escape to host via kernel exploits
-- **Read-only workspace**: Original files protected from malicious writes
+- **Read-only workspace**: Original files protected from malicious writes (copy+sync model only; live-mount containers via `mounts:` opt out of this, relying on git — the network/DLP layer still applies)
 - **Forced proxy**: All traffic routed through mitmproxy (no bypass)
 - **Deploy keys**: Unique SSH key per machine (not personal credentials)
 - **DLP scrubbing**: Real-time secret/PII detection and scrubbing in HTTP traffic
@@ -443,6 +447,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-04-14 (Persistent containers + bidirectional sync complete)
+**Last Updated**: 2026-07-01 (Live bind-mount & multi-project containers complete)
 **Status**: Phase 1 complete, Phase 2 DLP complete, Phase 2b persistent containers complete
 **Next Milestone**: High-severity alerting OR Phase 3 production hardening

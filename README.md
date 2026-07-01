@@ -10,6 +10,7 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 - **DLP scrubbing**: Real-time secret and PII scrubbing in outbound HTTP traffic
 - **Audit logging**: Complete network and session logs for compliance
 - **Git bundle workflow**: Agent changes are reviewed and merged using standard git operations
+- **Live bind-mounts**: Optionally map one or more project directories straight into a container (`mounts:` in `vibedom.yml`) for direct editing with no copy/sync — one container can span several projects
 
 ## Requirements
 
