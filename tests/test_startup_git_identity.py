@@ -34,8 +34,12 @@ def _run_identity_fn(repo: Path) -> None:
     script = _extract_function('ensure_git_identity') + '\nensure_git_identity\n'
     # Isolate from the host's global/system git config so "unset" is truly unset.
     env = {
-        'GIT_CONFIG_GLOBAL': '/dev/null',
-        'GIT_CONFIG_SYSTEM': '/dev/null',
+        # Isolate from the host's config: HOME (the throwaway repo) backs the
+        # global config, so `git config --global` (what ensure_git_identity now
+        # writes) lands in $HOME/.gitconfig. Point the system config at a
+        # nonexistent path, not /dev/null — this git version errors with
+        # "bad config line 1 in file /dev/null" when a config path is /dev/null.
+        'GIT_CONFIG_SYSTEM': str(repo / 'nonexistent-system-config'),
         'PATH': '/usr/bin:/bin:/usr/local/bin',
         'HOME': str(repo),
     }
@@ -44,8 +48,12 @@ def _run_identity_fn(repo: Path) -> None:
 
 def _git(repo: Path, *args: str) -> str:
     env = {
-        'GIT_CONFIG_GLOBAL': '/dev/null',
-        'GIT_CONFIG_SYSTEM': '/dev/null',
+        # Isolate from the host's config: HOME (the throwaway repo) backs the
+        # global config, so `git config --global` (what ensure_git_identity now
+        # writes) lands in $HOME/.gitconfig. Point the system config at a
+        # nonexistent path, not /dev/null — this git version errors with
+        # "bad config line 1 in file /dev/null" when a config path is /dev/null.
+        'GIT_CONFIG_SYSTEM': str(repo / 'nonexistent-system-config'),
         'PATH': '/usr/bin:/bin:/usr/local/bin',
         'HOME': str(repo),
     }
