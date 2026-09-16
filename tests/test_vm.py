@@ -911,3 +911,50 @@ def test_start_without_mounts_still_mounts_workspace_ro(test_workspace, test_con
     assert f'{test_workspace}:/mnt/workspace:ro' in cmd
     assert any(a.endswith(':/work/repo') for a in cmd)
     assert 'VIBEDOM_LIVE=1' not in cmd
+
+
+# --- apple/container inspect status parsing (shape changed in apple/container 1.4.x) ---
+
+APPLE_INSPECT_LEGACY = '[{"configuration": {"id": "vibedom-myapp"}, "status": "running", "networks": []}]'
+APPLE_INSPECT_V14 = (
+    '[{"id": "vibedom-myapp", "configuration": {"id": "vibedom-myapp"}, '
+    '"status": {"state": "running", "networks": [], "startedDate": "2026-09-16T10:00:00Z"}}]'
+)
+APPLE_INSPECT_V14_STOPPED = (
+    '[{"id": "vibedom-myapp", "configuration": {"id": "vibedom-myapp"}, '
+    '"status": {"state": "stopped", "networks": []}}]'
+)
+
+
+def test_parse_apple_inspect_status_legacy_string():
+    from vibedom.vm import parse_apple_inspect_status
+    assert parse_apple_inspect_status(APPLE_INSPECT_LEGACY) == 'running'
+
+
+def test_parse_apple_inspect_status_v14_object():
+    from vibedom.vm import parse_apple_inspect_status
+    assert parse_apple_inspect_status(APPLE_INSPECT_V14) == 'running'
+    assert parse_apple_inspect_status(APPLE_INSPECT_V14_STOPPED) == 'stopped'
+
+
+def test_parse_apple_inspect_status_empty_or_invalid():
+    from vibedom.vm import parse_apple_inspect_status
+    assert parse_apple_inspect_status('[]') is None
+    assert parse_apple_inspect_status('not json') is None
+    assert parse_apple_inspect_status('[{"status": {"unexpected": 1}}]') is None
+
+
+def test_vm_is_running_apple_v14_status_object(tmp_path):
+    """is_running() must read status.state when apple/container returns a status object."""
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('shutil.which', return_value='/usr/local/bin/container'):
+        vm = VMManager(workspace, tmp_path / 'config', runtime='apple')
+
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_V14)
+        assert vm.is_running() is True
+        mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_V14_STOPPED)
+        assert vm.is_running() is False
+        mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_LEGACY)
+        assert vm.is_running() is True

@@ -11,6 +11,34 @@ from typing import Optional
 from vibedom.proxy import ProxyManager
 
 
+def parse_apple_inspect_status(stdout: str) -> Optional[str]:
+    """Extract the runtime state string from ``container inspect`` JSON output.
+
+    apple/container <1.4 returned ``[{"status": "running", ...}]``; 1.4+ nests it as
+    ``[{"status": {"state": "running", ...}, ...}]``. Both shapes are accepted.
+
+    Returns None when the output is empty, not JSON, or has no recognisable status.
+
+    Example:
+        >>> parse_apple_inspect_status('[{"status": {"state": "running"}}]')
+        'running'
+    """
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(data, list):
+        if not data:
+            return None
+        data = data[0]
+    if not isinstance(data, dict):
+        return None
+    status = data.get('status')
+    if isinstance(status, dict):
+        status = status.get('state')
+    return status if isinstance(status, str) else None
+
+
 class VMManager:
     """Manages VM instances for sandbox sessions."""
 
@@ -210,20 +238,13 @@ class VMManager:
     def is_running(self) -> bool:
         """Check whether the container is currently running."""
         if self.runtime == 'apple':
-            # apple/container returns JSON array; status field is top-level on each element
             result = subprocess.run(
                 [self.runtime_cmd, 'inspect', self.container_name],
                 capture_output=True, text=True,
             )
             if result.returncode != 0:
                 return False
-            try:
-                data = json.loads(result.stdout)
-                if isinstance(data, list):
-                    return bool(data) and data[0].get('status') == 'running'
-                return data.get('status') == 'running'
-            except (json.JSONDecodeError, KeyError, IndexError):
-                return False
+            return parse_apple_inspect_status(result.stdout) == 'running'
         else:
             result = subprocess.run(
                 [self.runtime_cmd, 'inspect', '--format', '{{.State.Status}}', self.container_name],

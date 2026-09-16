@@ -1080,3 +1080,23 @@ def test_shell_non_live_container_uses_work_repo_dir(tmp_path):
     cmd = mock_run.call_args[0][0]
     assert '-w' in cmd
     assert cmd[cmd.index('-w') + 1] == '/work/repo'
+
+
+def test_live_container_status_apple_v14_status_object(tmp_path):
+    """_live_container_status must return a string when apple/container 1.4+ nests state under status."""
+    from vibedom.cli import _live_container_status
+    c = ContainerState(
+        workspace=str(tmp_path / 'myapp'), container_name='vibedom-myapp',
+        runtime='apple', status='running', created_at='2026-09-16T00:00:00', repo_dir=str(tmp_path / 'repo'),
+    )
+    v14 = '[{"id": "vibedom-myapp", "configuration": {}, "status": {"state": "running", "networks": []}}]'
+    legacy = '[{"configuration": {}, "status": "stopped", "networks": []}]'
+    with patch('vibedom.cli.subprocess.run') as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout=v14)
+        assert _live_container_status(c) == 'running'
+        mock_run.return_value = MagicMock(returncode=0, stdout=legacy)
+        assert _live_container_status(c) == 'stopped'
+        mock_run.return_value = MagicMock(returncode=0, stdout='[]')
+        assert _live_container_status(c) == 'gone'
+        mock_run.return_value = MagicMock(returncode=1, stdout='')
+        assert _live_container_status(c) == 'gone'

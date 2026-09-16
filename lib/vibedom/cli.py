@@ -13,7 +13,7 @@ from vibedom.ssh_keys import generate_deploy_key, get_public_key
 from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
-from vibedom.vm import VMManager
+from vibedom.vm import VMManager, parse_apple_inspect_status
 from vibedom.session import Session, SessionCleanup, SessionRegistry
 from vibedom.project_config import ProjectConfig
 from vibedom.proxy import ProxyManager
@@ -771,14 +771,9 @@ def _live_container_status(c: ContainerState) -> str:
         )
         if result.returncode != 0:
             return 'gone'
-        try:
-            import json as _json
-            data = _json.loads(result.stdout)
-            if isinstance(data, list):
-                return data[0].get('status', 'unknown') if data else 'gone'
-            return data.get('status', 'unknown')
-        except (ValueError, KeyError, IndexError):
-            return 'unknown'
+        if result.stdout.strip() in ('', '[]'):
+            return 'gone'
+        return parse_apple_inspect_status(result.stdout) or 'unknown'
     else:
         result = subprocess.run(
             ['docker', 'inspect', '--format', '{{.State.Status}}', c.container_name],
