@@ -62,7 +62,7 @@
 
 **Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists (and skips clone/init entirely when `VIBEDOM_LIVE` is set)
 - Enables container restart without re-cloning
-- SSH agent socket check prevents duplicate agents on restart
+- SSH agent liveness check (`ssh-add -l`) on restart: reuses a live agent, replaces a stale socket left by `container stop`/`start`
 
 **Host-side rsync for sync**: `pull`/`push` rsync directly between host paths
 - Container repo is a bind mount, so no `docker exec` needed

@@ -22,6 +22,37 @@ WORKSPACE_DIR="${WORKSPACE_DIR:-/mnt/workspace}"
 
 # Prepare the working tree. In live-mount mode (VIBEDOM_LIVE) the real project
 # dir(s) are bind-mounted under $WORK_DIR, so there is nothing to clone or init.
+# Start (or reuse) the SSH agent holding the deploy key.
+#
+# The socket lives at a fixed path so `exec` sessions can find it. After
+# `container stop` / `container start` the socket *file* survives in the
+# container filesystem but the agent process does not, so existence of the
+# socket is not enough — we probe the agent with `ssh-add -l` (exit 2 means
+# "can't talk to agent") and replace a stale socket with a fresh agent.
+start_ssh_agent() {
+    key_file="${SSH_KEY_FILE:-/mnt/config/keys/id_ed25519_vibedom}"
+    sock="${SSH_AGENT_SOCK:-/tmp/ssh-agent.sock}"
+    profile="${SSH_AGENT_PROFILE:-/etc/profile.d/ssh-agent.sh}"
+
+    [ -f "$key_file" ] || return 0
+
+    if [ -S "$sock" ]; then
+        SSH_AUTH_SOCK="$sock" ssh-add -l > /dev/null 2>&1
+        if [ $? -ne 2 ]; then
+            echo "SSH agent already running"
+            export SSH_AUTH_SOCK="$sock"
+            return 0
+        fi
+        echo "Removing stale SSH agent socket"
+        rm -f "$sock"
+    fi
+
+    ssh-agent -a "$sock" > /dev/null
+    SSH_AUTH_SOCK="$sock" ssh-add "$key_file" 2>/dev/null || true
+    echo "export SSH_AUTH_SOCK=$sock" > "$profile"
+    export SSH_AUTH_SOCK="$sock"
+}
+
 init_repo() {
     if [ -n "$VIBEDOM_LIVE" ]; then
         echo "Live mount mode: using mounted project(s) directly"
@@ -88,16 +119,7 @@ else
 fi
 
 # Start SSH agent with deploy key at a fixed socket path so exec sessions can use it
-# Skip if socket already exists (container restart)
-if [ -f /mnt/config/keys/id_ed25519_vibedom ] && [ ! -S /tmp/ssh-agent.sock ]; then
-    ssh-agent -a /tmp/ssh-agent.sock > /dev/null
-    SSH_AUTH_SOCK=/tmp/ssh-agent.sock ssh-add /mnt/config/keys/id_ed25519_vibedom 2>/dev/null || true
-    echo "export SSH_AUTH_SOCK=/tmp/ssh-agent.sock" > /etc/profile.d/ssh-agent.sh
-    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-elif [ -S /tmp/ssh-agent.sock ]; then
-    echo "SSH agent already running"
-    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-fi
+start_ssh_agent
 
 # Proxy environment variables are set by container runtime (-e flags)
 # and are available to all processes including docker exec sessions
