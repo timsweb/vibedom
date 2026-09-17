@@ -86,7 +86,8 @@ vibedom up ~/projects/myapp
 - **First run**: scans for secrets, builds image, clones repo into container (live-mount containers bind-mount your dirs instead of cloning — see [Live Mount Mode](#live-mount-mode-mounts))
 - **After `vibedom down`**: restarts the existing container (no re-clone, environment preserved)
 - **After a reboot**: container is in a stopped state — `vibedom up` restarts it, same as after `vibedom down`
-- **Container missing** (e.g. manually deleted): recreates using existing repo data — no secret scan, no re-clone, no setup re-run
+- **Container missing** (e.g. manually deleted): recreates using existing repo data — no secret scan, no re-clone; setup commands re-run
+- **`vibedom up myapp --recreate`**: removes the existing container and creates it again from the current `vibedom.yml`. Use this after changing `mounts:`, `env:`, `network:`, `memory:` or `base_image:`, or to pick up a new vibedom image. Repo data and container state are kept; setup commands re-run. Copy+sync containers ask for confirmation (skip with `--yes`); live-mount containers don't, since nothing is lost.
 - **Already running**: checks proxy health and prints status
 
 ### Project Setup (vibedom.yml)
@@ -122,7 +123,7 @@ mounts:                           # live bind-mount dirs instead of copy+sync (s
 
 `setup:` commands run once when the container is first created, not on subsequent restarts. Packages installed during setup persist in the container.
 
-`env:` vars are baked into the container at creation time (like `network`/`memory`). Changing them in `vibedom.yml` takes effect after a `vibedom destroy` + `vibedom up`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.
+`env:` vars are baked into the container at creation time (like `network`/`memory`). Changing them in `vibedom.yml` takes effect after `vibedom up --recreate`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.
 
 ### Git identity
 
@@ -151,6 +152,7 @@ mounts:
 - **Mapping** (`- {path:, as:, ro:}`): `path` is required; `as` overrides the `/work/<name>` subdirectory (needed when two dirs share a basename); `ro: true` mounts read-only (good for shared libraries the agent should read but not modify).
 - `~` and relative paths resolve against the directory containing `vibedom.yml`; `.` is that directory itself.
 - The directory you pass to `vibedom up` names the container but is **not** auto-mounted — list it (e.g. `- .`) if you want it mounted. `mounts:` is the complete list.
+- Mounts are fixed when the container is created. After adding or changing entries, run `vibedom up myapp --recreate` to apply them (no data is lost — the mounts are your real directories).
 
 **What changes in live mode:**
 - **No copy, no sync.** The agent edits your real files directly; `vibedom pull`/`push` are unnecessary and become no-ops.
@@ -249,6 +251,8 @@ vibedom destroy myapp
 ```
 
 Removes the container and deletes its repo data entirely. Asks for confirmation. Use `--force` to skip.
+
+To rebuild a container from a changed `vibedom.yml` **without** losing its repo data, use `vibedom up myapp --recreate` instead.
 
 ---
 

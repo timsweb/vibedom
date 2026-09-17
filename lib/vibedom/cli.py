@@ -876,15 +876,39 @@ def _restart_container_proxy(container: ContainerState, config_dir: Path) -> Non
     click.echo(f"✅ Proxy restarted on port {proxy.port} (PID {proxy.pid})")
 
 
+def _run_setup_commands(vm, project_config) -> None:
+    """Run vibedom.yml `setup:` commands inside a freshly created container.
+
+    Called after every create (first run, recreate, or re-create of a container
+    that vanished from the runtime) since anything setup installed into the
+    container filesystem is gone.
+    """
+    if not (project_config and project_config.setup):
+        return
+    click.echo("Running setup commands...")
+    for setup_cmd in project_config.setup:
+        click.echo(f"  $ {setup_cmd}")
+        result = vm.exec(['sh', '-c', setup_cmd])
+        if result.returncode != 0:
+            click.secho(f"  Warning: setup command failed: {result.stderr}", fg='yellow')
+
+
 @main.command()
 @click.argument('workspace', type=click.Path(exists=True))
 @click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'],
               case_sensitive=False), default='auto',
               help='Container runtime (auto-detect, docker, or apple)')
-def up(workspace, runtime):
+@click.option('--recreate', is_flag=True,
+              help='Remove the existing container and create it again from the current '
+                   'vibedom.yml (picks up new mounts, env, image changes). Repo data and '
+                   'container state are kept; setup commands re-run.')
+@click.option('--yes', '-y', '--force', 'yes', is_flag=True,
+              help='Skip the confirmation prompt for --recreate')
+def up(workspace, runtime, recreate, yes):
     """Start a persistent project container.
 
     Creates the container on first use; restarts it if stopped; does nothing if already running.
+    With --recreate, an existing container is removed and rebuilt from the current vibedom.yml.
     """
     workspace_path = Path(workspace).resolve()
     if not workspace_path.is_dir():
@@ -929,7 +953,33 @@ def up(workspace, runtime):
         mounts=mounts,
     )
 
-    if vm.is_running():
+    if recreate and vm.exists():
+        if not (mounts or yes) and not click.confirm(
+            f"Recreate container '{vm.container_name}'? The container filesystem is discarded "
+            f"(the repo copy at {container_dir / 'repo'} is kept).",
+            default=False,
+        ):
+            click.echo("Aborted")
+            return
+        click.echo(f"Removing container '{vm.container_name}' for recreation...")
+        if container_state and container_state.proxy_pid:
+            try:
+                os.kill(container_state.proxy_pid, signal_module.SIGTERM)
+            except ProcessLookupError:
+                pass
+        vm.stop()
+        if not (project_config and project_config.base_image):
+            # No project layer to rebuild on create, so refresh the base image here
+            # so startup.sh changes are picked up. Layer caching keeps this cheap.
+            click.echo("Rebuilding base image...")
+            VMManager.build_image(resolved_runtime)
+        if container_state is None:
+            container_state = ContainerState.create(
+                workspace_path, resolved_runtime, live=bool(mounts)
+            )
+        container_state.live = bool(mounts)
+
+    if vm.is_running() and not recreate:
         click.echo(f"Container '{vm.container_name}' is already running.")
         if container_state:
             _ensure_proxy_running(container_state, container_dir, config_dir)
@@ -939,7 +989,7 @@ def up(workspace, runtime):
             click.echo(f"Repo: {container_dir / 'repo'}")
         return
 
-    if vm.exists():
+    if vm.exists() and not recreate:
         # Container stopped — restart proxy then container
         click.echo(f"Restarting container '{vm.container_name}'...")
         if container_state is None:
@@ -969,6 +1019,7 @@ def up(workspace, runtime):
             click.secho(f"Error: {e}", fg='red')
             sys.exit(1)
         container_state.mark_running(vm._proxy.port, vm._proxy.pid, container_dir)
+        _run_setup_commands(vm, project_config)
 
     else:
         # First-time creation
@@ -998,14 +1049,7 @@ def up(workspace, runtime):
         else:
             container_state.save(container_dir)
 
-        # Run one-time setup commands if specified
-        if project_config and project_config.setup:
-            click.echo("Running setup commands...")
-            for setup_cmd in project_config.setup:
-                click.echo(f"  $ {setup_cmd}")
-                result = vm.exec(['sh', '-c', setup_cmd])
-                if result.returncode != 0:
-                    click.secho(f"  Warning: setup command failed: {result.stderr}", fg='yellow')
+        _run_setup_commands(vm, project_config)
 
     if mounts:
         click.echo(f"\nContainer running (live mount)!")

@@ -1100,3 +1100,136 @@ def test_live_container_status_apple_v14_status_object(tmp_path):
         assert _live_container_status(c) == 'gone'
         mock_run.return_value = MagicMock(returncode=1, stdout='')
         assert _live_container_status(c) == 'gone'
+
+
+def _recreate_setup(tmp_path, *, live: bool, yml: str = '') -> tuple:
+    """Project dir + saved running ContainerState for an existing container."""
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    if yml:
+        (proj / 'vibedom.yml').write_text(yml)
+    home = tmp_path / 'home'
+    cdir = home / '.vibedom' / 'containers' / 'agent'
+    cdir.mkdir(parents=True)
+    (cdir / 'repo').mkdir()
+    (cdir / 'repo' / 'keep.txt').write_text('data')
+    state = ContainerState.create(proj, 'docker', live=live)
+    state.mark_running(54321, 4242, cdir)
+    return proj, home, cdir
+
+
+def _invoke_recreate(proj, home, args, *, exists=True, setup_result=None):
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.scan_workspace', return_value=[]):
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.os.kill') as mock_kill:
+                    with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                        mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                        mock_vm = MagicMock()
+                        mock_vm.is_running.return_value = exists
+                        mock_vm.exists.return_value = exists
+                        mock_vm._proxy = MagicMock(port=60000, pid=77777)
+                        mock_vm.exec.return_value = setup_result or MagicMock(returncode=0)
+                        mock_vm_cls.return_value = mock_vm
+                        result = runner.invoke(
+                            main, ['up', str(proj), *args], catch_exceptions=False
+                        )
+    return result, mock_vm_cls, mock_vm, mock_kill
+
+
+def test_up_recreate_removes_container_and_starts_fresh(tmp_path):
+    """--recreate on a live container: kill old proxy, remove container, create anew,
+    without prompting (nothing is lost for live mounts)."""
+    target = tmp_path / 'www'
+    target.mkdir()
+    proj, home, cdir = _recreate_setup(tmp_path, live=True, yml=f'mounts:\n  - {target}\n')
+
+    result, mock_vm_cls, mock_vm, mock_kill = _invoke_recreate(proj, home, ['--recreate'])
+
+    assert result.exit_code == 0, result.output
+    mock_kill.assert_called_once_with(4242, signal.SIGTERM)
+    mock_vm.stop.assert_called_once()
+    mock_vm.start.assert_called_once()
+    mock_vm.restart.assert_not_called()
+    state = ContainerState.load(cdir)
+    assert state.status == 'running'
+    assert state.proxy_port == 60000
+    assert state.live is True
+
+
+def test_up_recreate_reruns_setup_commands(tmp_path):
+    proj, home, _ = _recreate_setup(
+        tmp_path, live=False, yml='setup:\n  - echo one\n  - echo two\n'
+    )
+    result, _, mock_vm, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+
+    assert result.exit_code == 0, result.output
+    cmds = [c.args[0] for c in mock_vm.exec.call_args_list]
+    assert cmds == [['sh', '-c', 'echo one'], ['sh', '-c', 'echo two']]
+
+
+def test_up_recreate_rebuilds_base_image_when_no_base_image_configured(tmp_path):
+    proj, home, _ = _recreate_setup(tmp_path, live=False)
+    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+
+    assert result.exit_code == 0, result.output
+    mock_vm_cls.build_image.assert_called_once_with('docker')
+
+
+def test_up_recreate_skips_base_image_rebuild_when_project_layer_used(tmp_path):
+    """With base_image: the project layer rebuilds on create anyway (COPY startup.sh)."""
+    proj, home, _ = _recreate_setup(tmp_path, live=False, yml='base_image: php:8.3\n')
+    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+
+    assert result.exit_code == 0, result.output
+    mock_vm_cls.build_image.assert_not_called()
+
+
+def test_up_recreate_preserves_repo_dir(tmp_path):
+    proj, home, cdir = _recreate_setup(tmp_path, live=False)
+    result, _, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+
+    assert result.exit_code == 0, result.output
+    assert (cdir / 'repo' / 'keep.txt').read_text() == 'data'
+
+
+def test_up_recreate_copy_sync_container_prompts_and_aborts_on_no(tmp_path):
+    proj, home, _ = _recreate_setup(tmp_path, live=False)
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+            mock_vm = MagicMock()
+            mock_vm.is_running.return_value = True
+            mock_vm.exists.return_value = True
+            mock_vm_cls.return_value = mock_vm
+            result = runner.invoke(main, ['up', str(proj), '--recreate'], input='n\n')
+
+    assert result.exit_code == 0, result.output
+    assert 'Aborted' in result.output
+    mock_vm.stop.assert_not_called()
+    mock_vm.start.assert_not_called()
+
+
+def test_up_recreate_without_existing_container_is_plain_create(tmp_path):
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    home = tmp_path / 'home'
+    result, _, mock_vm, mock_kill = _invoke_recreate(proj, home, ['--recreate'], exists=False)
+
+    assert result.exit_code == 0, result.output
+    mock_kill.assert_not_called()
+    mock_vm.stop.assert_not_called()
+    mock_vm.start.assert_called_once()
+
+
+def test_up_recreates_missing_container_and_reruns_setup(tmp_path):
+    """Container gone from the runtime but state intact: setup must run again, since
+    anything it installed into the container filesystem is gone."""
+    proj, home, _ = _recreate_setup(tmp_path, live=False, yml='setup:\n  - echo one\n')
+    result, _, mock_vm, _ = _invoke_recreate(proj, home, [], exists=False)
+
+    assert result.exit_code == 0, result.output
+    assert 'Recreating' in result.output
+    assert [c.args[0] for c in mock_vm.exec.call_args_list] == [['sh', '-c', 'echo one']]

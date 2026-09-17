@@ -105,6 +105,7 @@ vibedom push myapp src/      # push amendments back to container
 **Between tasks:**
 - `vibedom down myapp` — stops container, environment preserved
 - `vibedom up myapp` — restarts, no re-clone, proxy auto-restarts
+- `vibedom up myapp --recreate` — removes and recreates the container from the current `vibedom.yml` (new mounts/env/image); repo data kept, setup re-runs
 
 ### Ephemeral Session Workflow (Legacy / Isolated Tasks)
 
@@ -311,6 +312,7 @@ vibedom init
 
 # --- Persistent container workflow ---
 vibedom up ~/projects/myapp          # start (or restart) container
+vibedom up myapp --recreate          # rebuild container from changed vibedom.yml (keeps repo data)
 vibedom shell myapp                  # open shell inside container
 vibedom pull myapp src/              # sync container -> host (specific path)
 vibedom push myapp src/              # sync host -> container (specific path)
