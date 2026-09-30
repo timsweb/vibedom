@@ -30,3 +30,4 @@ env/
 # Not a Node.js project
 package-lock.json
 .superpowers/
+.worktrees/
