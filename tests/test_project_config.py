@@ -80,20 +80,19 @@ def test_project_config_setup_defaults_to_none(tmp_path):
     assert config.setup is None
 
 
-def test_project_config_loads_sync_exclude(tmp_path):
-    """Should parse sync_exclude list from vibedom.yml."""
-    (tmp_path / 'vibedom.yml').write_text(
-        'sync_exclude:\n  - vendor/\n  - storage/logs/\n'
-    )
+def test_sync_exclude_is_obsolete_and_warns(tmp_path, capsys):
+    (tmp_path / 'vibedom.yml').write_text('sync_exclude:\n  - vendor/\n')
     config = ProjectConfig.load(tmp_path)
-    assert config.sync_exclude == ['vendor/', 'storage/logs/']
+    assert config is not None
+    assert not hasattr(config, 'sync_exclude')
+    err = capsys.readouterr().err
+    assert 'sync_exclude' in err and 'no longer' in err
 
 
-def test_project_config_sync_exclude_defaults_to_none(tmp_path):
-    """sync_exclude is optional and defaults to None."""
-    (tmp_path / 'vibedom.yml').write_text('base_image: myimage:latest\n')
-    config = ProjectConfig.load(tmp_path)
-    assert config.sync_exclude is None
+def test_project_config_still_rejects_truly_unknown_fields(tmp_path):
+    (tmp_path / 'vibedom.yml').write_text('bogus: 1\n')
+    with pytest.raises(ValueError, match='bogus'):
+        ProjectConfig.load(tmp_path)
 
 
 def test_project_config_loads_env(tmp_path):

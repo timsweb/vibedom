@@ -1,5 +1,6 @@
 """Parse vibedom.yml project configuration."""
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -8,8 +9,11 @@ import yaml
 
 KNOWN_FIELDS = {
     'base_image', 'network', 'host_aliases', 'setup',
-    'sync_exclude', 'memory', 'env', 'mounts',
+    'memory', 'env', 'mounts',
 }
+
+# Fields from removed features. Present in old vibedom.yml files; warn, don't fail.
+OBSOLETE_FIELDS = {'sync_exclude'}
 
 
 @dataclass(frozen=True)
@@ -68,7 +72,6 @@ class ProjectConfig:
     network: Optional[str] = None
     host_aliases: Optional[dict] = None
     setup: Optional[list] = None
-    sync_exclude: Optional[list] = None
     memory: Optional[str] = None
     env: Optional[dict] = None
     mounts: Optional[list[Mount]] = None
@@ -83,7 +86,13 @@ class ProjectConfig:
         with open(config_file, encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}
 
-        unknown = set(data.keys()) - KNOWN_FIELDS
+        for field in sorted(OBSOLETE_FIELDS & set(data.keys())):
+            print(
+                f"Warning: vibedom.yml '{field}:' is no longer supported and was ignored "
+                f"(copy+sync was removed; projects are live-mounted).",
+                file=sys.stderr,
+            )
+        unknown = set(data.keys()) - KNOWN_FIELDS - OBSOLETE_FIELDS
         if unknown:
             raise ValueError(f"Unknown vibedom.yml field(s): {', '.join(sorted(unknown))}")
 
@@ -92,7 +101,6 @@ class ProjectConfig:
             network=data.get('network'),
             host_aliases=data.get('host_aliases'),
             setup=data.get('setup'),
-            sync_exclude=data.get('sync_exclude'),
             memory=data.get('memory'),
             env=data.get('env'),
             mounts=_parse_mounts(data.get('mounts'), workspace.resolve()),
