@@ -483,3 +483,22 @@ def test_up_has_no_pull_or_push():
     assert result.exit_code == 2
     result = CliRunner().invoke(main, ['push', 'x'])
     assert result.exit_code == 2
+
+
+def test_status_marks_legacy_container_and_lists_others(tmp_path):
+    home = tmp_path / 'home'
+    old, _, _ = _legacy_setup(tmp_path)          # writes home/.vibedom/containers/old
+    new = tmp_path / 'new'
+    new.mkdir()
+    cdir = home / '.vibedom' / 'containers' / 'new'
+    cdir.mkdir(parents=True)
+    ContainerState.create(new, 'docker').save(cdir)
+
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli._live_container_status', return_value='stopped'):
+            result = CliRunner().invoke(main, ['status'])
+
+    assert result.exit_code == 0, result.output
+    lines = {l.split()[0]: l for l in result.output.splitlines() if l.startswith(('old', 'new'))}
+    assert 'legacy' in lines['old'] and 'vibedom destroy' in lines['old']
+    assert 'legacy' not in lines['new']

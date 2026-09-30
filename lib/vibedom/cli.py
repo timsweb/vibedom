@@ -590,7 +590,11 @@ def status(workspace):
             proxy_info += f" (PID {c.proxy_pid})"
         else:
             proxy_info += " (dead)" if c.proxy_pid else ""
-        live_status = _live_container_status(c)
+        if c.legacy:
+            live_status = 'legacy'
+            proxy_info = 'copy+sync container — run: vibedom destroy ' + workspace_name
+        else:
+            live_status = _live_container_status(c)
         click.echo(
             f"{workspace_name:<25} "
             f"{c.container_name:<35} "
