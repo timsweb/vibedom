@@ -34,8 +34,10 @@ start_ssh_agent() {
     [ -f "$key_file" ] || return 0
 
     if [ -S "$sock" ]; then
-        SSH_AUTH_SOCK="$sock" ssh-add -l > /dev/null 2>&1
-        if [ $? -ne 2 ]; then
+        # `|| rc=$?` keeps a non-zero probe from tripping `set -e`
+        rc=0
+        SSH_AUTH_SOCK="$sock" ssh-add -l > /dev/null 2>&1 || rc=$?
+        if [ "$rc" -ne 2 ]; then
             echo "SSH agent already running"
             export SSH_AUTH_SOCK="$sock"
             return 0
@@ -119,7 +121,8 @@ sync_claude_config() {
         cp "$CLAUDE_CONFIG" "$CLAUDE_CONFIG_PERSIST" 2>/dev/null || true
     fi
 }
-trap 'sync_claude_config; exit 0' SIGTERM SIGINT
+# POSIX signal names (no SIG prefix): dash, /bin/sh on Debian/Ubuntu, rejects SIGTERM
+trap 'sync_claude_config; exit 0' TERM INT
 
 while true; do
     sync_claude_config

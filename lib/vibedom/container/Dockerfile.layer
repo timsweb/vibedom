@@ -3,14 +3,28 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+# Base images may drop to a non-root USER; installs and /root/... need root.
+USER root
+
 # Install required tools if not present in the project base image.
 # Build runs before the proxy starts, so network is clean and unrestricted.
+# openssh-client provides ssh-agent/ssh-add for startup.sh; ripgrep backs
+# USE_BUILTIN_RIPGREP=0 below.
 # For Alpine: upgrade musl to 1.2.5+ first (Claude requires posix_getdents, added in 1.2.5).
 # Only musl is pulled from edge; everything else comes from the image's own repos.
-RUN (apt-get update -qq 2>/dev/null && apt-get install -y --no-install-recommends git bash curl ca-certificates 2>/dev/null) || \
-    (apk del g++ musl-dev libc-dev 2>/dev/null || true && \
-     apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/main/ musl --upgrade && \
-     apk add --no-cache git bash curl ca-certificates libgcc libstdc++ ripgrep)
+RUN set -e; \
+    if command -v apt-get >/dev/null; then \
+        apt-get update -qq; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git bash curl ca-certificates openssh-client ripgrep; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v apk >/dev/null; then \
+        apk del g++ musl-dev libc-dev 2>/dev/null || true; \
+        apk add --no-cache --repository https://dl-cdn.alpinelinux.org/alpine/edge/main/ musl --upgrade; \
+        apk add --no-cache git bash curl ca-certificates openssh-client libgcc libstdc++ ripgrep; \
+    else \
+        echo "vibedom: base image needs apt-get (Debian/Ubuntu) or apk (Alpine)" >&2; \
+        exit 1; \
+    fi
 
 # Install Claude Code CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
