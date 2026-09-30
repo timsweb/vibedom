@@ -4,7 +4,7 @@
 
 **Vibedom** is a hardware-isolated sandbox environment for running AI coding agents (Claude Code, Cursor, etc.) safely on Apple Silicon Macs.
 
-**Current Status**: Phase 1 complete. Phase 2 DLP complete (real-time scrubbing, audit logging). Persistent container workflow complete (iterative development with bidirectional sync).
+**Current Status**: Phase 1 complete. Phase 2 DLP complete (real-time scrubbing, audit logging). Single live-mount container model (ephemeral sessions and copy+sync removed 2026-09-30).
 
 **Primary Goal**: Enable safe AI agent usage in enterprise environments with compliance requirements (SOC2, HIPAA, etc.)
 
@@ -14,8 +14,8 @@
 
 1. **VM Isolation** (`lib/vibedom/vm.py`)
     - Supports both apple/container (preferred) and Docker (fallback)
-    - Read-only workspace mount at `/mnt/workspace`
-    - Agent workspace at `/work/repo` (bind-mounted from host — persists for persistent containers)
+    - Project directories bind-mounted live at `/work/<name>` (one per `Mount`; `mounts` is required)
+    - `~/.vibedom` read-only at `/mnt/config`; shared Claude config volume at `/root/.claude`
     - Claude Code CLI pre-installed with persistent config volume
     - Health check polling for VM readiness
     - `exists()` / `is_running()` / `pause()` / `restart()` for persistent container lifecycle
@@ -23,12 +23,13 @@
 2. **Container State** (`lib/vibedom/container_state.py`)
    - `ContainerState` dataclass persisted as `~/.vibedom/containers/{name}/container.json`
    - Tracks workspace, runtime, proxy PID/port, status (running/stopped)
+   - `load()` marks a pre-live-mount `container.json` (no `live: true`) as `legacy`; `up`/`shell`/`--recreate` refuse it, `status` flags it
    - `ContainerRegistry` for discovering/looking up containers by workspace name or path
 
 3. **Network Control** (`lib/vibedom/proxy.py`, `lib/vibedom/container/mitmproxy_addon.py`)
    - ProxyManager starts mitmproxy as a **host process** (not inside the container)
-   - One process per container/session on an OS-assigned port (no hardcoded ports)
-   - Port and PID stored in `container.json` or `state.json` for whitelist reload
+   - One process per container on an OS-assigned port (no hardcoded ports)
+   - Port and PID stored in `container.json` for whitelist reload
    - Proxy auto-restarts on `vibedom up`/`vibedom shell` if PID is dead
    - Container receives `HTTP_PROXY=http://host.docker.internal:<port>` and CA cert via `/mnt/config/mitmproxy/`
    - Domain whitelist enforcement with subdomain support
@@ -40,40 +41,20 @@
    - Risk categorization (critical vs warnings)
    - Interactive review UI for findings
 
-5. **Session Management** (`lib/vibedom/session.py`)
-   - Structured logging (JSONL for network, text for events)
-   - Session directories: `~/.vibedom/logs/session-YYYYMMDD-HHMMSS-microseconds/`
-   - Retained for ephemeral session workflow
-
-6. **CLI** (`lib/vibedom/cli.py`)
-   - **Persistent containers**: `up`, `down`, `destroy`, `status`, `shell`, `pull`, `push`
-   - **Ephemeral sessions**: `run`, `stop`, `attach`, `review`, `merge`
-   - **Shared**: `init`, `reload-whitelist`, `list`, `rm`, `prune`, `housekeeping`, `proxy-restart`
+5. **CLI** (`lib/vibedom/cli.py`)
+   - `init`, `up`, `down`, `destroy`, `status`, `shell`, `reload-whitelist`, `proxy-restart`
 
 ### Key Design Decisions
 
-**Two container models**: Persistent (recommended) and ephemeral (retained for compatibility)
-- Persistent: `vibedom up/down` — container survives across tasks (including reboots — stopped, not removed), repo bind-mounted from `~/.vibedom/containers/{name}/repo/`, sync via rsync
-- Ephemeral: `vibedom run/stop` — fresh container per task, repo cloned on start, changes extracted as git bundle on stop
+**Single model: persistent, live-mounted**
+- `vibedom up <dir>` creates one long-lived container per project; `down`/`up` stop and restart it with the filesystem preserved
+- Default mount: with no `mounts:` in `vibedom.yml`, `<dir>` is mounted rw at `/work/<basename>`. A `mounts:` list is the complete list (the `up` dir is not auto-mounted; add `- .`). Scalar or `{path, as, ro}` entries; one container can span several projects, all sharing one `base_image`
+- No copy, no sync: the agent edits real files; git is the safety net. Network/DLP and per-mount secret scanning are unchanged
+- Legacy containers (created by the removed copy+sync model) are refused with rescue instructions and must be destroyed and recreated
+- `sync_exclude:` in `vibedom.yml` is obsolete: warns and is ignored
 
-**Two filesystem models for persistent containers**: copy+sync (default) and live-mount (opt-in via `mounts:`)
-- Copy+sync (default): read-only `/mnt/workspace` + repo copy at `/work/repo`, moved with `pull`/`push`
-- Live-mount (`mounts:` in `vibedom.yml`): host dirs bind-mounted live (rw or `:ro`) at `/work/<name>`, `VIBEDOM_LIVE=1` set, no `/mnt/workspace`/`/work/repo` copy, no sync. One container can span several projects (each at `/work/<name>`). Trades the read-only-original protection for direct edits (git is the safety net); network/DLP and secret scanning are unchanged. `vibedom shell` opens `/work`; `pull`/`push` no-op. All mounts share one `base_image`.
-
-**Idempotent startup**: `startup.sh` skips git clone if `/work/repo/.git` exists (and skips clone/init entirely when `VIBEDOM_LIVE` is set)
-- Enables container restart without re-cloning
+**Idempotent startup**: `startup.sh` only `cd`s to `/work`; nothing to clone
 - SSH agent liveness check (`ssh-add -l`) on restart: reuses a live agent, replaces a stale socket left by `container stop`/`start`
-
-**Host-side rsync for sync**: `pull`/`push` rsync directly between host paths
-- Container repo is a bind mount, so no `docker exec` needed
-- `.gitignore` rules applied via `--filter=':- .gitignore'`
-- `sync_exclude:` in `vibedom.yml` for project-specific additional excludes
-- Additive by default (no `--delete`); destructive mode opt-in
-- Path-specific sync uses `--relative` with rsync's `/.` anchor — directory structure preserved in destination
-
-**Git Bundle Workflow** (ephemeral sessions): Git-native approach for agent changes
-- Rationale: Cleaner code review, better GitLab integration, preserves commit history
-- Implementation: Container clones workspace, creates git bundle at session end
 
 **Explicit Proxy**: HTTP_PROXY/HTTPS_PROXY environment variables
 - Rationale: Works with both HTTP and HTTPS
@@ -90,38 +71,19 @@
 ### Persistent Container Workflow (Primary)
 
 **Setup (once per project):**
-- Add `vibedom.yml` with `base_image`, `network`, `setup` commands, `sync_exclude`, `env`, `mounts` (live bind-mounts)
-- `vibedom up ~/projects/myapp` — creates container, runs setup commands
+- Optional `vibedom.yml` with `base_image`, `network`, `host_aliases`, `setup` commands, `memory`, `env`, `mounts`
+- `vibedom up ~/projects/myapp` — creates container with `~/projects/myapp` at `/work/myapp`, runs setup commands
 
 **Iterative development:**
 ```
-vibedom shell myapp          # open shell, run agent inside
-vibedom pull myapp src/      # pull agent's changes to host
-# review, test, amend locally
-vibedom push myapp src/      # push amendments back to container
-# repeat
+vibedom shell myapp          # open shell in /work/myapp, run agent inside
+# the agent edits your real files; review with git on the host, commit, repeat
 ```
 
 **Between tasks:**
 - `vibedom down myapp` — stops container, environment preserved
 - `vibedom up myapp` — restarts, no re-clone, proxy auto-restarts
-- `vibedom up myapp --recreate` — removes and recreates the container from the current `vibedom.yml` (new mounts/env/image); repo data kept, setup re-runs
-
-### Ephemeral Session Workflow (Legacy / Isolated Tasks)
-
-**Container Initialization:**
-- Git workspaces: Cloned from host, checkout current branch
-- Non-git workspaces: Fresh git init with snapshot commit
-- Agent works in `/work/repo` (mounted to `~/.vibedom/logs/session-xyz/repo`)
-
-**During Session:**
-- Agent commits normally to isolated repo
-
-**After Session:**
-- Git bundle created at `~/.vibedom/logs/session-xyz/repo.bundle`
-- User adds bundle as remote, reviews commits
-- User merges into feature branch (with or without squash)
-- User pushes feature branch for GitLab MR
+- `vibedom up myapp --recreate` — removes and recreates the container from the current `vibedom.yml` (new mounts/env/image); no prompt, setup re-runs
 
 ### Git Worktrees
 
@@ -165,19 +127,9 @@ All features follow TDD:
 
 ## Known Limitations
 
-### Persistent Container Sync
+### Legacy Containers
 
-**Current Implementation:**
-- Sync is manual — user runs `vibedom pull`/`vibedom push` explicitly
-- No automatic file watching or live sync
-- Full-tree sync requires confirmation (path-specific sync does not)
-
-### Git Bundle Workflow (Ephemeral Sessions)
-
-**Current Implementation:**
-- Agent works on same branch as user's current branch
-- Bundle contains all refs from session
-- User decides to keep commits or squash during merge
+Containers created before the live-mount-only change (copy+sync) cannot be started. `up`/`shell` print rescue instructions: pull anything from `~/.vibedom/containers/<name>/repo/`, then `vibedom destroy <name>` and `vibedom up <dir>`. See `docs/USAGE.md` → Upgrading.
 
 ### Proxy Mode
 
@@ -234,17 +186,14 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 # Build VM image
 vibedom init  # builds image on first run
 
-# Test persistent container workflow
+# Container workflow
 vibedom up ~/projects/test-workspace
 vibedom status
-vibedom push test-workspace src/          # push a specific path
-vibedom pull test-workspace src/ --dry-run
+vibedom shell test-workspace              # lands in /work/test-workspace
 vibedom down test-workspace
-vibedom up ~/projects/test-workspace      # should restart without re-cloning
+vibedom up ~/projects/test-workspace      # should restart without re-running setup
+vibedom up test-workspace --recreate      # removes + recreates, setup re-runs
 vibedom destroy test-workspace --force
-
-# Test ephemeral session workflow
-vibedom run ~/projects/test-workspace
 
 # Verify inside container
 docker exec vibedom-<workspace> cat /tmp/.vm-ready
@@ -253,11 +202,8 @@ docker exec vibedom-<workspace> ls /work
 # Test HTTP/HTTPS whitelisting
 docker exec vibedom-<workspace> curl https://pypi.org/simple/
 
-# Check logs (persistent)
+# Check logs
 cat ~/.vibedom/containers/test-workspace/network.jsonl
-
-# Stop
-vibedom stop ~/projects/test-workspace
 ```
 
 ## Project Structure
@@ -267,8 +213,7 @@ vibedom/
 ├── lib/vibedom/              # Core Python package
 │   ├── cli.py               # Click CLI commands
 │   ├── vm.py                # VM lifecycle management
-│   ├── container_state.py   # Persistent container state (ContainerState, ContainerRegistry)
-│   ├── session.py           # Ephemeral session logging
+│   ├── container_state.py   # Container state (ContainerState incl. legacy detection, ContainerRegistry)
 │   ├── project_config.py    # vibedom.yml parsing
 │   ├── gitleaks.py          # Secret scanning
 │   ├── review_ui.py         # Interactive review
@@ -310,27 +255,17 @@ ruff check lib/ tests/
 # First-time setup
 vibedom init
 
-# --- Persistent container workflow ---
-vibedom up ~/projects/myapp          # start (or restart) container
-vibedom up myapp --recreate          # rebuild container from changed vibedom.yml (keeps repo data)
+# --- Container workflow ---
+vibedom up ~/projects/myapp          # create (or restart) container; ~/projects/myapp -> /work/myapp
+vibedom up myapp --recreate          # rebuild container from changed vibedom.yml (files untouched)
 vibedom shell myapp                  # open shell inside container
-vibedom pull myapp src/              # sync container -> host (specific path)
-vibedom push myapp src/              # sync host -> container (specific path)
-vibedom pull myapp                   # sync all (respects .gitignore, asks confirmation)
-vibedom status                       # show all container states
+vibedom status                       # show all container states (flags legacy ones)
 vibedom down myapp                   # stop (preserves filesystem)
-vibedom destroy myapp                # remove container + data
-
-# --- Ephemeral session workflow ---
-vibedom run ~/projects/myapp         # start isolated session
-vibedom attach                       # shell into session
-vibedom stop                         # stop + create git bundle
-vibedom review myapp-happy-turing    # inspect changes
-vibedom merge myapp-happy-turing     # merge changes
+vibedom destroy myapp                # remove container + vibedom state (mounts untouched)
 
 # --- Shared ---
 vibedom reload-whitelist             # hot-reload domain whitelist
-vibedom list                         # list all sessions
+vibedom proxy-restart myapp          # restart the host proxy on the same port
 ```
 
 ### Debugging
@@ -349,11 +284,8 @@ vibedom shell myapp
 # Check proxy health
 cat ~/.vibedom/containers/myapp/container.json   # shows proxy_pid / proxy_port
 
-# Check network logs (persistent containers)
+# Check network logs
 cat ~/.vibedom/containers/myapp/network.jsonl
-
-# Check network logs (ephemeral sessions)
-cat ~/.vibedom/logs/session-*/network.jsonl
 ```
 
 ## Future Roadmap
@@ -367,15 +299,15 @@ cat ~/.vibedom/logs/session-*/network.jsonl
 ### Phase 2b: Persistent Containers ✅ (Complete)
 
 - ✅ **Persistent containers**: `vibedom up/down/destroy` — container survives across tasks
-- ✅ **Bidirectional sync**: `vibedom push/pull` with `.gitignore`-aware rsync
-- ✅ **Setup scripts**: `setup:` in `vibedom.yml` for one-time environment setup
+- ✅ **Setup scripts**: `setup:` in `vibedom.yml`, run on every create
 - ✅ **Proxy auto-restart**: proxy health checked and restarted on `up`/`shell`
+- ✅ **Live mounts only** (2026-09-30): copy+sync (`push`/`pull`) and ephemeral sessions removed; `mounts:` or the default mount is the single model
 
 ### Phase 3: Production Hardening
 
 - **High-severity alerting**: Real-time notifications for critical DLP findings
 - **Log rotation**: Implement size limits and rotation policies
-- **Session/container cleanup**: Automatic cleanup with retention policies
+- **Container cleanup**: Automatic cleanup with retention policies
 - **Multi-tenant support**: Workspace isolation for multiple users
 
 ## Contributing Guidelines
@@ -418,12 +350,11 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 ### Current Security Model
 
 - **VM isolation**: Agent cannot escape to host via kernel exploits
-- **Read-only workspace**: Original files protected from malicious writes (copy+sync model only; live-mount containers via `mounts:` opt out of this, relying on git — the network/DLP layer still applies)
+- **Live mounts**: the agent edits real files under `/work`; `ro: true` mounts for reference code; git is the safety net (the network/DLP layer is what protects secrets)
 - **Forced proxy**: All traffic routed through mitmproxy (no bypass)
 - **Deploy keys**: Unique SSH key per machine (not personal credentials)
 - **DLP scrubbing**: Real-time secret/PII detection and scrubbing in HTTP traffic
 - **Pre-flight scanning**: Gitleaks scan before VM starts
-- **Sync path validation**: `pull`/`push` reject absolute paths and `../` traversal
 
 ### Known Security Limitations
 
@@ -449,6 +380,6 @@ For questions or issues, refer to project documentation or create an issue in th
 
 ---
 
-**Last Updated**: 2026-07-01 (Live bind-mount & multi-project containers complete)
+**Last Updated**: 2026-09-30 (single live-mount model; ephemeral sessions and copy+sync removed)
 **Status**: Phase 1 complete, Phase 2 DLP complete, Phase 2b persistent containers complete
 **Next Milestone**: High-severity alerting OR Phase 3 production hardening
