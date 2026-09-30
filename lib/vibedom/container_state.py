@@ -1,10 +1,13 @@
 """Persistent container state management."""
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Keys written by older vibedom versions that no longer exist on the dataclass.
+_DROPPED_KEYS = {'repo_dir', 'live'}
 
 
 @dataclass
@@ -16,54 +19,65 @@ class ContainerState:
         state.save(container_dir)
         # later:
         state = ContainerState.load(container_dir)
+        if state.legacy:
+            ...  # created by the removed copy+sync model; must be destroyed
     """
 
     workspace: str
     container_name: str
     runtime: str
     created_at: str
-    repo_dir: str
     status: str           # 'running' | 'stopped'
     proxy_port: Optional[int] = None
     proxy_pid: Optional[int] = None
-    live: bool = False
+    # True when container.json predates live mounts (copy+sync container).
+    # Set by load(); never written to disk.
+    legacy: bool = field(default=False, compare=False)
 
     @classmethod
-    def create(cls, workspace: Path, runtime: str, live: bool = False) -> 'ContainerState':
+    def create(cls, workspace: Path, runtime: str) -> 'ContainerState':
         """Create a new ContainerState for a fresh container."""
         workspace = workspace.resolve()
-        name = workspace.name
-        container_name = f'vibedom-{name}'
-        repo_dir = Path.home() / '.vibedom' / 'containers' / name / 'repo'
         return cls(
             workspace=str(workspace),
-            container_name=container_name,
+            container_name=f'vibedom-{workspace.name}',
             runtime=runtime,
             created_at=datetime.now().isoformat(timespec='seconds'),
-            repo_dir=str(repo_dir),
             status='stopped',
-            live=live,
         )
 
     @classmethod
     def load(cls, container_dir: Path) -> 'ContainerState':
-        """Load state from container directory."""
+        """Load state from container directory.
+
+        A container.json without `live: true` was written for a copy+sync
+        container, a model that no longer exists; it loads with legacy=True so
+        commands can refuse it with instructions instead of crashing.
+        """
         state_file = container_dir / 'container.json'
         if not state_file.exists():
             raise FileNotFoundError(f"No container.json in {container_dir}")
         try:
             data = json.loads(state_file.read_text())
-            return cls(**data)
         except json.JSONDecodeError as e:
             raise ValueError(f"Malformed container.json in {container_dir}: {e}") from e
+        legacy = data.get('live') is not True
+        clean = {k: v for k, v in data.items() if k not in _DROPPED_KEYS and k != 'legacy'}
+        try:
+            state = cls(**clean)
         except TypeError as e:
             raise ValueError(f"Invalid container.json schema in {container_dir}: {e}") from e
+        state.legacy = legacy
+        return state
 
     def save(self, container_dir: Path) -> None:
         """Persist state to container directory."""
         container_dir.mkdir(parents=True, exist_ok=True)
-        state_file = container_dir / 'container.json'
-        state_file.write_text(json.dumps(asdict(self), indent=2))
+        data = asdict(self)
+        data.pop('legacy')
+        # Marker so a future load() knows this file post-dates copy+sync.
+        data['live'] = True
+        (container_dir / 'container.json').write_text(json.dumps(data, indent=2))
 
     def mark_running(self, proxy_port: int, proxy_pid: int, container_dir: Path) -> None:
         """Transition to running status and persist."""
