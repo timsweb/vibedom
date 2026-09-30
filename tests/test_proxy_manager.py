@@ -22,12 +22,12 @@ def test_find_free_port_returns_usable_port():
 
 def test_proxy_manager_start_returns_port(tmp_path):
     """start() should launch mitmdump and return the port."""
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
 
-    manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
+    manager = ProxyManager(log_dir=log_dir, config_dir=config_dir)
 
     with patch('subprocess.Popen') as mock_popen, \
          patch('vibedom.proxy._find_free_port', return_value=18765):
@@ -49,12 +49,12 @@ def test_proxy_manager_start_returns_port(tmp_path):
 
 def test_proxy_manager_stop_terminates_process(tmp_path):
     """stop() should terminate the mitmdump process."""
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
 
-    manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
+    manager = ProxyManager(log_dir=log_dir, config_dir=config_dir)
 
     with patch('subprocess.Popen') as mock_popen, \
          patch('vibedom.proxy._find_free_port', return_value=18765):
@@ -73,12 +73,12 @@ def test_proxy_manager_stop_terminates_process(tmp_path):
 def test_proxy_manager_reload_sends_sighup(tmp_path):
     """reload() should send SIGHUP to the mitmdump process."""
     import signal as signal_module
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
 
-    manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
+    manager = ProxyManager(log_dir=log_dir, config_dir=config_dir)
 
     with patch('subprocess.Popen') as mock_popen, \
          patch('vibedom.proxy._find_free_port', return_value=18765):
@@ -96,12 +96,12 @@ def test_proxy_manager_reload_sends_sighup(tmp_path):
 
 def test_proxy_manager_passes_paths_as_env(tmp_path):
     """mitmdump should receive config paths via environment variables."""
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
 
-    manager = ProxyManager(session_dir=session_dir, config_dir=config_dir)
+    manager = ProxyManager(log_dir=log_dir, config_dir=config_dir)
 
     with patch('subprocess.Popen') as mock_popen, \
          patch('vibedom.proxy._find_free_port', return_value=18765):
@@ -121,7 +121,7 @@ def test_proxy_manager_passes_paths_as_env(tmp_path):
 
 def test_ca_cert_path_returns_none_before_start(tmp_path):
     """ca_cert_path should return None when cert doesn't exist yet."""
-    manager = ProxyManager(session_dir=tmp_path / 'session', config_dir=tmp_path / 'config')
+    manager = ProxyManager(log_dir=tmp_path / 'session', config_dir=tmp_path / 'config')
     assert manager.ca_cert_path is None
 
 
@@ -133,5 +133,5 @@ def test_ca_cert_path_returns_path_when_cert_exists(tmp_path):
     cert = mitmproxy_dir / 'mitmproxy-ca-cert.pem'
     cert.write_text('fake cert')
 
-    manager = ProxyManager(session_dir=tmp_path / 'session', config_dir=config_dir)
+    manager = ProxyManager(log_dir=tmp_path / 'session', config_dir=config_dir)
     assert manager.ca_cert_path == cert

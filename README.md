@@ -8,9 +8,8 @@ A hardware-isolated sandbox environment for running AI coding agents (Claude Cod
 - **Network whitelisting**: HTTP and HTTPS traffic control with domain whitelist
 - **Secret detection**: Pre-flight Gitleaks scan catches hardcoded credentials
 - **DLP scrubbing**: Real-time secret and PII scrubbing in outbound HTTP traffic
-- **Audit logging**: Complete network and session logs for compliance
-- **Git bundle workflow**: Agent changes are reviewed and merged using standard git operations
-- **Live bind-mounts**: Optionally map one or more project directories straight into a container (`mounts:` in `vibedom.yml`) for direct editing with no copy/sync — one container can span several projects
+- **Audit logging**: Complete network logs for compliance
+- **Live-mounted projects**: the agent edits your real files inside an isolated VM; git is the safety net. One container can span several projects via `mounts:` in `vibedom.yml`
 
 ## Requirements
 
@@ -32,35 +31,31 @@ uv tool install git+https://github.com/timsweb/vibedom.git
 # Initialize (once per machine — generates SSH key, builds container image)
 vibedom init
 
-# Run agent in sandbox
-vibedom run ~/projects/myapp
+# Create a container with ~/projects/myapp mounted at /work/myapp
+vibedom up ~/projects/myapp
 
-# Attach a shell to the running container
-vibedom attach
+# Open a shell inside it and run claude (or your agent) there
+vibedom shell myapp
 
-# Stop session and create git bundle
-vibedom stop
-
-# Review agent's changes
-vibedom review myapp-happy-turing
-
-# Merge into your workspace
-vibedom merge myapp-happy-turing
+# Stop it between tasks; `vibedom up` restarts it with everything preserved
+vibedom down myapp
 ```
 
 See [docs/USAGE.md](docs/USAGE.md) for the full usage guide.
 
+**Upgrading?** Ephemeral sessions and copy+sync containers have been removed. Containers created before this change must be destroyed and recreated — see [Upgrading](docs/USAGE.md#upgrading-from-an-earlier-vibedom).
+
 ## How It Works
 
-1. **Pre-flight scan**: Gitleaks checks for hardcoded secrets before starting
-2. **Container boot**: Alpine Linux container starts with workspace mounted read-only
-3. **Isolated git repo**: Agent commits to a cloned repo inside the session
-4. **Network filter**: mitmproxy enforces domain whitelist, scrubs secrets from outbound requests
-5. **Git bundle**: On stop, changes are bundled for review and merge using standard git
+1. **VM isolation**: the agent runs in an Alpine container under apple/container (hardware VM) or Docker
+2. **Live bind mounts**: your project directories appear under `/work`; edits land on your real files, so use branches and commits as the safety net
+3. **Pre-flight scan**: Gitleaks checks every mounted directory for hardcoded secrets before the container is created
+4. **Network filter**: mitmproxy enforces a domain whitelist and scrubs secrets from outbound requests
+5. **Deploy keys**: a per-machine SSH key, not your personal credentials, is what the agent gets
 
 ## Security Model
 
-- **Container isolation**: Agent cannot modify host files (read-only workspace mount)
+- **VM isolation**: the agent cannot reach the host beyond the directories you mount; `ro: true` mounts for reference code
 - **Forced proxy**: All traffic routed through mitmproxy — no bypass possible
 - **DLP scrubbing**: Secrets detected in outbound requests are redacted before sending
 - **Deploy keys**: Unique SSH key per machine, not personal credentials
@@ -72,7 +67,7 @@ git clone https://github.com/timsweb/vibedom.git
 cd vibedom
 uv sync
 uv run pytest tests/ -v                  # unit tests (no container needed)
-uv run pytest -m integration             # integration tests (requires Docker or apple/container)
+uv run pytest tests/test_vm.py -v        # runtime-dependent tests (requires Docker or apple/container)
 ```
 
 ## License

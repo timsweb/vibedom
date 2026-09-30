@@ -40,10 +40,10 @@ vibedom init
 
 This will:
 1. Generate an SSH deploy key at `~/.vibedom/keys/id_ed25519_vibedom`
-2. Create a default network whitelist at `~/.vibedom/config/trusted_domains.txt`
+2. Create a default network whitelist at `~/.vibedom/trusted_domains.txt`
 3. Build the container image (requires Docker or apple/container)
 
-Add the displayed public key to your GitLab account under **Settings → SSH Keys**. This lets the agent clone your private repositories.
+Add the displayed public key to your GitLab account under **Settings → SSH Keys**. This lets the agent push and fetch your private repositories over SSH.
 
 ## Container Runtime
 
@@ -59,23 +59,40 @@ vibedom up ~/projects/myapp --runtime docker
 vibedom up ~/projects/myapp --runtime apple
 ```
 
-## Two Workflows
+## Upgrading from an earlier vibedom
 
-Vibedom supports two ways of working. Choose based on how you use the tool:
+Vibedom now has a single model: the project directory is bind-mounted live into
+the container. Two earlier models have been removed:
 
-| | **Persistent containers** | **Ephemeral sessions** |
-|---|---|---|
-| **Command** | `vibedom up` | `vibedom run` |
-| **Container lifetime** | Survives across tasks | Destroyed on stop |
-| **Environment setup** | Once (composer install, etc.) | Every run |
-| **Code sync** | `vibedom push` / `vibedom pull` | Git bundle at stop |
-| **Best for** | Iterative development | Isolated one-shot tasks |
+- **Ephemeral sessions** — `vibedom run`, `stop`, `attach`, `review`, `merge`,
+  `list`, `rm`, `prune`, `housekeeping` no longer exist.
+- **Copy+sync containers** — `vibedom pull`/`push`, the `/work/repo` copy and
+  the read-only `/mnt/workspace` mount no longer exist.
+
+**If you have a container created before this change, you must destroy it and
+recreate it.** `vibedom up`, `vibedom shell` and `vibedom status` will tell you
+when a container is one of these ("legacy"). Steps:
+
+1. Anything the agent changed lives in the host-side copy at
+   `~/.vibedom/containers/<name>/repo/`. It is a normal git repo: commit and
+   push from there, or copy files out.
+2. `vibedom destroy <name>`
+3. `vibedom up <dir>` — the container is recreated with `<dir>` mounted live.
+
+Containers that already used `mounts:` keep working without any action.
+
+Old `~/.vibedom/logs/session-*` directories are no longer used and can be
+deleted. A `sync_exclude:` key in `vibedom.yml` is ignored with a warning.
 
 ---
 
-## Persistent Container Workflow (Recommended)
+## Workflow
 
-Persistent containers stay alive across multiple tasks. The container filesystem (installed packages, `.env` files, compiled assets) is preserved between sessions. You sync code explicitly when you want it.
+A vibedom container is persistent: it stays alive across tasks, and the
+container filesystem (installed packages, compiled assets) is preserved between
+`down` and `up`. Your project files are never copied — they are bind-mounted
+live from the host, so the agent edits your real files and git is your safety
+net.
 
 ### Starting a Container
 
@@ -83,16 +100,16 @@ Persistent containers stay alive across multiple tasks. The container filesystem
 vibedom up ~/projects/myapp
 ```
 
-- **First run**: scans for secrets, builds image, clones repo into container (live-mount containers bind-mount your dirs instead of cloning — see [Live Mount Mode](#live-mount-mode-mounts))
-- **After `vibedom down`**: restarts the existing container (no re-clone, environment preserved)
+- **First run**: scans every mount for secrets, builds the image, creates the container with `~/projects/myapp` mounted at `/work/myapp`, runs `setup:` commands
+- **After `vibedom down`**: restarts the existing container (environment preserved)
 - **After a reboot**: container is in a stopped state — `vibedom up` restarts it, same as after `vibedom down`
-- **Container missing** (e.g. manually deleted): recreates using existing repo data — no secret scan, no re-clone; setup commands re-run
-- **`vibedom up myapp --recreate`**: removes the existing container and creates it again from the current `vibedom.yml`. Use this after changing `mounts:`, `env:`, `network:`, `memory:` or `base_image:`, or to pick up a new vibedom image. Repo data and container state are kept; setup commands re-run. Copy+sync containers ask for confirmation (skip with `--yes`); live-mount containers don't, since nothing is lost.
+- **Container missing** (e.g. manually deleted): recreates it — no secret scan; setup commands re-run
+- **`vibedom up myapp --recreate`**: removes the existing container and creates it again from the current `vibedom.yml`. Use this after changing `mounts:`, `env:`, `network:`, `memory:` or `base_image:`, or to pick up a new vibedom image. No prompt — your files are bind-mounted, not copied, so nothing is lost. Setup commands re-run.
 - **Already running**: checks proxy health and prints status
 
 ### Project Setup (vibedom.yml)
 
-Add `vibedom.yml` to your workspace root to configure the container:
+Add `vibedom.yml` to your project root to configure the container:
 
 ```yaml
 base_image: wapi-php-fpm:latest   # use your project's image instead of Alpine
@@ -105,15 +122,11 @@ env:                              # extra env vars injected into the container
   DB_HOST: host.docker.internal
 
 setup:
-  - composer install              # run once on first 'vibedom up'
+  - composer install              # run once when the container is created
   - cp .env.example .env
   - php artisan key:generate
 
-sync_exclude:                     # extra excludes on top of .gitignore
-  - storage/logs/
-  - bootstrap/cache/
-
-mounts:                           # live bind-mount dirs instead of copy+sync (see below)
+mounts:                           # optional: which host dirs to mount (see below)
   - .                             #   this project → /work/<project-name>
   - ~/projects/api                #   another project → /work/api
   - path: ~/projects/shared-libs  #   mapping form: rename and/or make read-only
@@ -121,9 +134,9 @@ mounts:                           # live bind-mount dirs instead of copy+sync (s
     ro: true                      #   read-only mount
 ```
 
-`setup:` commands run once when the container is first created, not on subsequent restarts. Packages installed during setup persist in the container.
+`setup:` commands run when the container is created (first `up`, `--recreate`, or recreation after the container went missing), not on restarts. Packages installed during setup persist in the container.
 
-`env:` vars are baked into the container at creation time (like `network`/`memory`). Changing them in `vibedom.yml` takes effect after `vibedom up --recreate`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.
+`env:` vars are baked into the container at creation time (like `network`/`memory`/`mounts`). Changing them in `vibedom.yml` takes effect after `vibedom up --recreate`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.
 
 ### Git identity
 
@@ -131,11 +144,17 @@ Your host git identity is lifted into the container automatically. On container 
 
 > **apple/container:** The `network:` field is not supported. Expose services on the host and connect via `host.docker.internal`. Vibedom will warn and ignore the setting.
 
-### Live Mount Mode (mounts:)
+### Mounts
 
-By default a container works on a **copy** of your repo and you move changes with `vibedom pull`/`push` (see [Syncing Code](#syncing-code)). If you'd rather the agent edit your real files directly — and give a single container access to several projects at once — add a `mounts:` list. When `mounts:` is present, vibedom bind-mounts those host directories **live** into the container instead of cloning and syncing.
+Every container has one or more **mounts**: host directories bind-mounted live at `/work/<name>`.
 
-**Path options** — each entry maps a host directory to `/work/<name>`:
+**Default** — with no `mounts:` in `vibedom.yml` (or no `vibedom.yml` at all), the directory you pass to `vibedom up` is mounted read-write at `/work/<basename>`:
+
+```bash
+vibedom up ~/projects/myapp     # ~/projects/myapp → /work/myapp
+```
+
+**Explicit** — a `mounts:` list replaces the default entirely. It is the complete list of what gets mounted; the directory you pass to `vibedom up` names the container but is **not** auto-mounted, so list it (`- .`) if you want it inside.
 
 ```yaml
 mounts:
@@ -148,17 +167,10 @@ mounts:
     ro: true                      #   → /work/shared (read-only)
 ```
 
-- **Scalar** (`- <path>`): bind-mounted read-write at `/work/<basename>`. Use `- .` for a single project whose `vibedom.yml` lives in its root.
+- **Scalar** (`- <path>`): bind-mounted read-write at `/work/<basename>`.
 - **Mapping** (`- {path:, as:, ro:}`): `path` is required; `as` overrides the `/work/<name>` subdirectory (needed when two dirs share a basename); `ro: true` mounts read-only (good for shared libraries the agent should read but not modify).
 - `~` and relative paths resolve against the directory containing `vibedom.yml`; `.` is that directory itself.
-- The directory you pass to `vibedom up` names the container but is **not** auto-mounted — list it (e.g. `- .`) if you want it mounted. `mounts:` is the complete list.
-- Mounts are fixed when the container is created. After adding or changing entries, run `vibedom up myapp --recreate` to apply them (no data is lost — the mounts are your real directories).
-
-**What changes in live mode:**
-- **No copy, no sync.** The agent edits your real files directly; `vibedom pull`/`push` are unnecessary and become no-ops.
-- **`vibedom shell` opens `/work`** (the parent of all mounts) instead of `/work/repo`.
-- **Git is your safety net**, not the read-only-original protection of copy mode — agent commits land on your actual checked-out branch(es). Use branches/commits to stay safe, and treat it as "hand the project(s) to the agent" rather than editing the same tree simultaneously.
-- **Secret scanning and network/DLP isolation are unchanged** — every mount (including `ro:` ones) is gitleaks-scanned before start, and all traffic still goes through the whitelisting/DLP proxy.
+- Mounts are fixed when the container is created. After adding or changing entries, run `vibedom up myapp --recreate` to apply them.
 
 **Multi-project example** — one "agent container" spanning a backend and frontend:
 
@@ -176,45 +188,7 @@ vibedom shell agent            # opens /work; both projects are subdirectories
 
 > **One container = one base image.** All mounted projects share the container's `base_image` (and therefore its language/PHP version). Group projects that need different PHP versions into separate containers, or use a base image that provides multiple versions.
 
-### Syncing Code
-
-> Live-mount containers (those with a `mounts:` list) skip this entirely — their files are already shared with the host, and `pull`/`push` are no-ops. Syncing applies to the default copy-based workflow below.
-
-Changes made by the agent inside the container don't automatically appear on the host, and vice versa. Use explicit sync commands:
-
-```bash
-# Pull agent's changes → your workspace
-vibedom pull myapp
-
-# Pull only specific paths (directory structure is preserved)
-vibedom pull myapp src/ app/Http/
-vibedom pull myapp src/Controllers/UserController.php
-
-# Push your local edits → container
-vibedom push myapp
-
-# Push only specific paths
-vibedom push myapp src/Controllers/
-
-# Preview before syncing
-vibedom pull myapp --dry-run
-vibedom push myapp --dry-run
-```
-
-When you specify paths, the directory structure is preserved in the destination. For example, `vibedom pull myapp src/Controllers/Foo.php` lands at `src/Controllers/Foo.php` in your workspace — not at `Foo.php`.
-
-**What gets excluded automatically:**
-- Everything in `.gitignore` (vendor/, node_modules/, .env, build artifacts, etc.)
-- `.git/` itself
-- Additional patterns from `sync_exclude:` in `vibedom.yml`
-
-**Safety defaults:**
-- Sync is additive by default — files are copied/overwritten but nothing is deleted
-- Full-tree syncs (no path args) ask for confirmation before running
-- Use `--delete` to also remove files absent from the source (destructive)
-- Use `--yes` to skip the confirmation prompt in scripts
-
-### Opening a Shell
+### Working in the Container
 
 ```bash
 vibedom shell myapp
@@ -222,17 +196,32 @@ vibedom shell myapp
 vibedom shell
 ```
 
-This opens a bash shell at `/work/repo` inside the container, where Claude Code is pre-installed and authenticated. For [live-mount containers](#live-mount-mode-mounts) the shell opens at `/work` instead, with each mounted project as a subdirectory.
+This opens a bash shell inside the container, where Claude Code is pre-installed and authenticated. With a single mount the shell opens in `/work/<name>`; with several it opens in `/work`, with each project as a subdirectory.
+
+**Git is your safety net.** The agent edits your real files, and its commits land on your actual checked-out branch. Work on a branch, commit often, and treat it as "hand the project to the agent" rather than editing the same tree at the same time from the host.
+
+**Secret scanning and network/DLP isolation are unchanged** — every mount (including `ro:` ones) is gitleaks-scanned before the container is first created, and all traffic still goes through the whitelisting/DLP proxy.
+
+### Reaching Host Services
+
+Databases and caches are best run on the host (Docker Desktop, Homebrew) and reached from inside the container:
+
+- `HOST_IP` is set inside the container to the host's address.
+- `host_aliases:` in `vibedom.yml` maps a hostname to the host (`host`) or a fixed IP, so app config can keep using names like `wapi-redis`.
+
+Two caveats:
+
+- Docker Desktop must publish the service port on all interfaces (`0.0.0.0:3306:3306`), not only `127.0.0.1`, or the container cannot reach it through the host gateway.
+- Laravel Valet's dnsmasq and apple/container both want port 53. Stop Valet before `container system start` (see [Troubleshooting](#troubleshooting)).
 
 ### Checking Status
 
 ```bash
 vibedom status          # all containers
 vibedom status myapp    # specific project
-vibedom list            # containers and ephemeral sessions together
 ```
 
-Status is queried live from the container runtime — not from cached state on disk. After a reboot, a container that was running when you shut down will show as `stopped` rather than the stale `running` value stored on disk.
+Status is queried live from the container runtime — not from cached state on disk. After a reboot, a container that was running when you shut down will show as `stopped` rather than the stale `running` value stored on disk. Containers created before the live-mount-only change show as `legacy` with a reminder to destroy them.
 
 ### Stopping a Container
 
@@ -242,7 +231,7 @@ vibedom down myapp
 vibedom down
 ```
 
-Stops the container and proxy. The filesystem is preserved — `vibedom up` restarts it without re-cloning or re-running setup.
+Stops the container and proxy. The filesystem is preserved — `vibedom up` restarts it without re-running setup.
 
 ### Destroying a Container
 
@@ -250,95 +239,15 @@ Stops the container and proxy. The filesystem is preserved — `vibedom up` rest
 vibedom destroy myapp
 ```
 
-Removes the container and deletes its repo data entirely. Asks for confirmation. Use `--force` to skip.
+Removes the container and vibedom's state for it (`~/.vibedom/containers/myapp/`). Your mounted directories are never touched. Asks for confirmation; use `--force` to skip.
 
-To rebuild a container from a changed `vibedom.yml` **without** losing its repo data, use `vibedom up myapp --recreate` instead.
-
----
-
-## Ephemeral Session Workflow
-
-Each `vibedom run` creates a fresh isolated session. The container is destroyed on stop and changes are extracted as a git bundle for review.
-
-### Running a Session
-
-```bash
-vibedom run ~/projects/myapp
-```
-
-This will:
-1. Scan the workspace for secrets (Gitleaks) and show findings for review
-2. Start mitmproxy on the host as a dedicated proxy process
-3. Start the container with the workspace mounted read-only
-4. Clone your git repository into an isolated session
-
-On startup, vibedom prints a **session ID** (e.g. `myapp-happy-turing`) — use this to refer to the session in subsequent commands.
-
-### Attaching a Shell
-
-```bash
-vibedom attach
-# Auto-selects if only one session running
-
-vibedom attach myapp-happy-turing
-# Specific session by ID or workspace name
-```
-
-### Stopping a Session
-
-```bash
-vibedom stop
-vibedom stop myapp-happy-turing
-```
-
-Creates a git bundle from the session repository, then stops and removes the container.
-
-### Reviewing and Merging Changes
-
-```bash
-# Review what changed
-vibedom review myapp-happy-turing
-
-# Merge as a single squash commit (default)
-vibedom merge myapp-happy-turing
-
-# Keep full commit history
-vibedom merge myapp-happy-turing --merge
-```
-
-After merging, push your branch for peer review:
-
-```bash
-git push origin feature/add-authentication
-```
-
-### Manual Git Access
-
-The bundle is at `~/.vibedom/logs/session-<id>/repo.bundle`:
-
-```bash
-git remote add vibedom-session ~/.vibedom/logs/session-xyz/repo.bundle
-git fetch vibedom-session
-git log vibedom-session/main
-git diff main..vibedom-session/main
-```
-
-### Session Management
-
-```bash
-vibedom list                          # all sessions
-vibedom rm myapp-happy-turing         # delete a session (prompts)
-vibedom rm myapp-happy-turing --force # no prompt
-vibedom prune --dry-run               # preview non-running sessions
-vibedom prune                         # delete all non-running sessions
-vibedom housekeeping --days 30        # delete sessions older than 30 days
-```
+To rebuild a container from a changed `vibedom.yml`, use `vibedom up myapp --recreate` instead.
 
 ---
 
 ## Using Claude Code
 
-Claude Code is pre-installed in all container images. Authentication persists across containers and sessions via a shared volume.
+Claude Code is pre-installed in all container images. Authentication persists across containers via a shared volume.
 
 **First time:**
 ```bash
@@ -356,7 +265,7 @@ All outbound traffic is filtered through mitmproxy. Only domains in the whitelis
 ### Editing the Whitelist
 
 ```bash
-edit ~/.vibedom/config/trusted_domains.txt
+edit ~/.vibedom/trusted_domains.txt
 ```
 
 One domain per line. Subdomains are included automatically:
@@ -386,7 +295,7 @@ curl https://example.com/        # ❌ blocked
 
 Vibedom scrubs secrets from outbound HTTP requests in real time, preventing agents from exfiltrating workspace secrets (API keys, tokens, etc. found in `.env` files or config).
 
-All scrubbing events are logged to `~/.vibedom/containers/<name>/network.jsonl` (persistent) or `~/.vibedom/logs/session-*/network.jsonl` (ephemeral).
+All scrubbing events are logged to `~/.vibedom/containers/<name>/network.jsonl`.
 
 ## Troubleshooting
 
@@ -410,7 +319,7 @@ vibedom init
 
 ### Container shows wrong status after reboot (apple/container)
 
-apple/container containers survive reboots in a stopped state. Run `vibedom up <workspace>` as normal — it restarts the container without re-cloning or re-running setup. If networking seems broken inside the container after a reboot, you may need to run `container system dns create` on the host to restore DNS (a known apple/container issue).
+apple/container containers survive reboots in a stopped state. Run `vibedom up <workspace>` as normal — it restarts the container without re-running setup. If networking seems broken inside the container after a reboot, you may need to run `container system dns create` on the host to restore DNS (a known apple/container issue).
 
 ### Proxy died after terminal close
 
@@ -425,7 +334,7 @@ vibedom proxy-restart myapp
 ### "Domain not whitelisted"
 
 ```bash
-echo "new-domain.com" >> ~/.vibedom/config/trusted_domains.txt
+echo "new-domain.com" >> ~/.vibedom/trusted_domains.txt
 vibedom reload-whitelist
 ```
 
@@ -436,11 +345,13 @@ Review each finding:
 - **MEDIUM_RISK**: Will be scrubbed by DLP at runtime
 - **HIGH_RISK**: Fix before continuing
 
-### Bundle creation failed (ephemeral sessions)
+### Laravel Valet and apple/container fight over port 53
 
-The live repo is still accessible at `~/.vibedom/logs/session-xyz/repo`. Create the bundle manually:
+Valet's dnsmasq binds port 53, which apple/container's DNS also needs; `apk add` and other lookups inside the container fail. Stop Valet, then restart the container system:
 
 ```bash
-cd ~/.vibedom/logs/session-xyz/repo
-git bundle create ../repo.bundle --all
+valet stop
+container system stop && container system start
 ```
+
+Run your database and cache in Docker Desktop instead and reach them via `host_aliases:` (see [Reaching Host Services](#reaching-host-services)).

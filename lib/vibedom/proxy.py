@@ -32,10 +32,10 @@ def _wait_for_proxy(port: int, timeout: int = 10) -> bool:
 
 
 class ProxyManager:
-    """Manages a host-side mitmproxy process for one session."""
+    """Manages a host-side mitmproxy process for one container."""
 
-    def __init__(self, session_dir: Path, config_dir: Path):
-        self.session_dir = session_dir
+    def __init__(self, log_dir: Path, config_dir: Path):
+        self.log_dir = log_dir
         self.config_dir = config_dir
         self._process: Optional[subprocess.Popen] = None
         self._log_file = None
@@ -75,11 +75,11 @@ class ProxyManager:
         env = os.environ.copy()
         env.update({
             'VIBEDOM_WHITELIST_PATH': str(self.config_dir / 'trusted_domains.txt'),
-            'VIBEDOM_NETWORK_LOG_PATH': str(self.session_dir / 'network.jsonl'),
+            'VIBEDOM_NETWORK_LOG_PATH': str(self.log_dir / 'network.jsonl'),
             'VIBEDOM_GITLEAKS_CONFIG': str(self.config_dir / 'gitleaks.toml'),
         })
 
-        log_path = self.session_dir / 'mitmproxy.log'
+        log_path = self.log_dir / 'mitmproxy.log'
         self._log_file = open(log_path, 'w')
         self._process = subprocess.Popen(
             [
@@ -128,7 +128,7 @@ class ProxyManager:
         """Path to the mitmproxy CA cert (exists after start()).
 
         Example:
-            manager = ProxyManager(session_dir=Path('/tmp/session'), config_dir=Path('/tmp/config'))
+            manager = ProxyManager(log_dir=Path('/tmp/session'), config_dir=Path('/tmp/config'))
             manager.start()
             cert = manager.ca_cert_path  # Path to PEM cert, or None if not yet generated
         """

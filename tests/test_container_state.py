@@ -16,7 +16,6 @@ def test_container_state_create(tmp_path):
     assert state.runtime == 'docker'
     assert state.status == 'stopped'
     assert state.created_at is not None
-    assert state.repo_dir == str(Path.home() / '.vibedom' / 'containers' / 'myapp' / 'repo')
 
 
 def test_container_state_save_and_load(tmp_path):
@@ -142,27 +141,55 @@ def test_container_registry_find_by_workspace_path(tmp_path):
     assert found.workspace == str(workspace)
 
 
-def test_create_defaults_live_false(tmp_path):
-    state = ContainerState.create(tmp_path / 'myapp', 'docker')
-    assert state.live is False
-
-
-def test_create_live_roundtrips(tmp_path):
-    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=True)
-    state.save(tmp_path)
-    reloaded = ContainerState.load(tmp_path)
-    assert reloaded.live is True
-
-
-def test_load_legacy_json_without_live(tmp_path):
-    """A container.json written before the `live` field loads with live=False."""
-    (tmp_path / 'container.json').write_text(json.dumps({
+def _write_state(tmp_path, **extra):
+    data = {
         'workspace': str(tmp_path / 'myapp'),
         'container_name': 'vibedom-myapp',
         'runtime': 'docker',
         'created_at': '2026-01-01T00:00:00',
-        'repo_dir': str(tmp_path / 'repo'),
         'status': 'stopped',
-    }))
+    }
+    data.update(extra)
+    (tmp_path / 'container.json').write_text(json.dumps(data))
+
+
+def test_create_is_not_legacy(tmp_path):
+    state = ContainerState.create(tmp_path / 'myapp', 'docker')
+    assert state.legacy is False
+
+
+def test_save_writes_live_marker_and_no_dropped_fields(tmp_path):
+    """save() writes `live: true` as the new-model marker (so load() can tell
+    new files from copy+sync ones) and nothing else from the old schema."""
+    state = ContainerState.create(tmp_path / 'myapp', 'docker')
+    state.save(tmp_path)
+    data = json.loads((tmp_path / 'container.json').read_text())
+    assert data['live'] is True
+    assert 'legacy' not in data
+    assert 'repo_dir' not in data
+
+
+def test_load_json_without_live_key_is_legacy(tmp_path):
+    """State written before live mounts existed = copy+sync container."""
+    _write_state(tmp_path, repo_dir=str(tmp_path / 'repo'))
+    assert ContainerState.load(tmp_path).legacy is True
+
+
+def test_load_live_false_json_is_legacy(tmp_path):
+    _write_state(tmp_path, repo_dir=str(tmp_path / 'repo'), live=False)
+    assert ContainerState.load(tmp_path).legacy is True
+
+
+def test_load_live_true_json_is_not_legacy(tmp_path):
+    """Containers created with mounts: before this change keep working."""
+    _write_state(tmp_path, repo_dir=str(tmp_path / 'repo'), live=True)
     state = ContainerState.load(tmp_path)
-    assert state.live is False
+    assert state.legacy is False
+    assert state.container_name == 'vibedom-myapp'
+
+
+def test_load_ignores_dropped_fields(tmp_path):
+    _write_state(tmp_path, repo_dir='/x', live=True)
+    state = ContainerState.load(tmp_path)
+    assert not hasattr(state, 'repo_dir')
+    assert not hasattr(state, 'live')

@@ -24,7 +24,7 @@ ENV PATH="/root/.local/bin:$PATH"
 RUN echo 'export PATH="/root/.local/bin:$PATH"' > /etc/profile.d/local-bin.sh
 
 # Create required vibedom mount points
-RUN mkdir -p /usr/local/share/ca-certificates /mnt/workspace /work /mnt/config /mnt/session
+RUN mkdir -p /usr/local/share/ca-certificates /work /mnt/config
 
 # Copy vibedom startup script
 COPY startup.sh /usr/local/bin/vibedom-startup.sh

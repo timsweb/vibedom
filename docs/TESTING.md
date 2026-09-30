@@ -1,45 +1,17 @@
 # Testing Documentation
 
-## Test Results Summary
+## Overview
 
-**Overall**: 18/26 tests passing (69% pass rate)
+The suite is unit tests with the container runtime, proxy process and file
+system mocked where they would otherwise be needed. A handful of tests in
+`tests/test_vm.py` and `tests/test_proxy_manager.py` need a real container
+runtime or `mitmdump` on PATH; in a sandbox without those they fail for
+environmental reasons and that set is the baseline, not a regression.
 
-### Passing Tests (18)
-
-**Core Logic (100% passing)**:
-- ✅ Gitleaks integration (3/3)
-- ✅ Session management (3/3)
-- ✅ Mitmproxy addon (3/3)
-- ✅ VM manager logic (2/2)
-
-**Integration (varying)**:
-- ✅ CLI commands (3/3)
-- ✅ Basic integration (4/4)
-
-### Failing Tests (8)
-
-**Docker-dependent tests** (require Docker daemon access):
-- ❌ VM container lifecycle (2 tests)
-- ❌ VM filesystem operations (2 tests)
-- ❌ VM integration tests (4 tests)
-
-**Root cause**: Tests run in environment without Docker daemon access. Core business logic is fully tested and passing.
-
-## Code Coverage
-
-Estimated coverage: **~85%**
-
-**Well-covered**:
-- Gitleaks scanning and risk categorization
-- Session logging (network.jsonl, session.log)
-- Mitmproxy whitelist enforcement
-- VM manager error handling
-- CLI argument validation
-
-**Not covered** (acceptable for Phase 1 PoC):
-- Docker container runtime behavior
-- Overlay filesystem edge cases
-- Network proxy edge cases
+Shell functions in `startup.sh` (`init_repo`, `ensure_git_identity`,
+`start_ssh_agent`) are tested by extracting the real function text and running
+it under `/bin/sh` against throwaway directories, so the shipped code is what
+runs.
 
 ## HTTPS Support
 
@@ -145,7 +117,7 @@ git clone https://github.com/...   # ✅ Works
 
 **Setup:**
 - Created test workspace (`~/test-dlp-vibedom`) with `app.py`
-- Started vibedom sandbox (`vibedom run ~/test-dlp-vibedom`)
+- Started vibedom sandbox (historical run, pre-dating `vibedom up`)
 - Verified DLP files present in container: `dlp_scrubber.py`, `gitleaks.toml`, `mitmproxy_addon.py`
 
 **Test Results:**
@@ -218,36 +190,6 @@ All 8 requests (7 tests + 1 verbose retry) logged to `/var/log/vibedom/network.j
 4. Agent workflow is not interrupted -- requests succeed with scrubbed content
 5. Minor false positive: generic-api-key pattern matches JSON key names containing "api_key" (acceptable trade-off for security)
 
-## Git Bundle Workflow Testing
-
-**Manual Test Results (2026-02-14):**
-
-- ✅ Git workspace cloned with correct branch
-- ✅ Live repo accessible during session
-- ✅ Mid-session fetch shows new commits
-- ✅ Bundle created successfully
-- ✅ Bundle verifies correctly
-- ✅ Merge workflow completes
-- ✅ Non-git workspace initialized
-- ✅ CLI instructions display correctly
-
-**Integration Test Results:**
-- ✅ 5/5 git workflow tests passing (when Docker available)
-- ✅ 3/3 VM tests passing
-- ✅ 6/6 session tests passing
-- ✅ Bundle creation/verification
-- ✅ Live repo mounting
-- ✅ Merge from bundle
-- ✅ 3/3 CLI tests passing
-
-**Overall: 33/37 tests passing (89% pass rate)**
-
-**Test failures (4 tests):**
-- ⚠️ 3 HTTPS proxy tests failing due to HTTP/2 compatibility (known limitation)
-- ⚠️ 1 integration test expects overlay filesystem path (needs update for git workflow)
-
-**Note:** All core git bundle workflow functionality is fully tested and working. Failed tests are in unrelated areas (HTTPS proxy edge cases and outdated integration test expecting overlay FS).
-
 ## Running Tests
 
 ### Unit Tests
@@ -266,52 +208,39 @@ pytest tests/test_gitleaks.py -v
 pytest tests/ --cov=lib/vibedom --cov-report=html
 ```
 
-### Integration Tests
+### Runtime-dependent Tests
 
-**Prerequisites**:
-- Container runtime (Docker or apple/container)
-- Docker Desktop/Colima or apple/container installed
-- Sufficient disk space for Alpine image
-
-**Note**: Tests will use whichever runtime is available (prefers apple/container, falls back to Docker).
+**Prerequisites**: Docker or apple/container, and `mitmdump` on PATH (installed with vibedom).
 
 ```bash
-# Build VM image first
-vibedom init  # builds image on first run
-
-# Run integration tests
-pytest tests/test_integration.py -v
+vibedom init                    # builds the image on first run
 pytest tests/test_vm.py -v
+pytest tests/test_proxy_manager.py -v
 ```
 
 ### Manual Testing
 
 ```bash
-# Build image (auto-detects runtime)
-vibedom init  # builds image on first run
+vibedom init                              # builds image on first run
 
-# Test basic workflow
-vibedom run ~/projects/test-workspace
+vibedom up ~/projects/test-workspace      # first run: scan, create, setup
+vibedom status                            # running, proxy port + PID
+vibedom shell test-workspace              # lands in /work/test-workspace
 
-# In container, verify (use docker exec or container exec depending on your runtime):
-docker exec vibedom-<workspace> cat /tmp/.vm-ready
-docker exec vibedom-<workspace> ls /work
-# or
-container exec vibedom-<workspace> cat /tmp/.vm-ready
-container exec vibedom-<workspace> ls /work
+# Inside the container:
+cat /tmp/.vm-ready
+ls /work
+curl https://pypi.org/simple/             # whitelisted → 200
+curl https://example.com/                 # blocked → 403
+exit
 
-# Test HTTPS whitelisting (should succeed if pypi.org is whitelisted)
-docker exec vibedom-<workspace> curl https://pypi.org/simple/
+vibedom down test-workspace
+vibedom up ~/projects/test-workspace      # restarts, no setup re-run
+vibedom up test-workspace --recreate      # removes + recreates, setup re-runs
+vibedom destroy test-workspace --force    # removes container and its state
 
-# Test blocked domain (should fail with 403)
-docker exec vibedom-<workspace> curl https://example.com/
-
-# Check logs
-cat ~/.vibedom/logs/session-*/network.jsonl
-cat ~/.vibedom/logs/session-*/session.log
-
-# Stop sandbox
-vibedom stop
+# Logs
+cat ~/.vibedom/containers/test-workspace/network.jsonl
 ```
 
 ## Test Development Guidelines
@@ -320,12 +249,16 @@ vibedom stop
 
 ```
 tests/
-├── test_gitleaks.py      # Secret scanning logic
-├── test_session.py       # Session management
-├── test_mitmproxy.py     # Proxy addon logic
-├── test_vm.py           # VM manager (Docker-dependent)
-├── test_cli.py          # CLI commands (Docker-dependent)
-└── test_integration.py  # End-to-end (Docker-dependent)
+├── test_cli.py                 # up/down/status/shell/recreate, legacy refusal (VMManager mocked)
+├── test_vm.py                  # VMManager: run argv, mounts, runtime detection (some need a runtime)
+├── test_container_state.py     # ContainerState persistence + legacy detection
+├── test_project_config.py      # vibedom.yml parsing, mounts:, obsolete keys
+├── test_proxy_manager.py       # host proxy lifecycle (some need mitmdump)
+├── test_mitmproxy_addon.py     # whitelist + DLP addon logic
+├── test_dlp_scrubber.py        # scrubbing patterns
+├── test_startup_*.py           # startup.sh functions run under /bin/sh
+├── test_container_dockerfiles.py
+├── test_gitleaks.py, test_whitelist.py, test_ssh_keys.py, test_review_ui.py, test_https_proxy.py, test_proxy.py
 ```
 
 ### Writing New Tests
