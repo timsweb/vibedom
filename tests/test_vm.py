@@ -7,6 +7,10 @@ from unittest.mock import patch, MagicMock
 from vibedom.vm import VMManager
 from vibedom.project_config import Mount
 
+
+def _mount(path):
+    return Mount(host_path=path, name=path.name, read_only=False)
+
 @pytest.fixture
 def test_workspace():
     """Create a temporary workspace for testing."""
@@ -26,7 +30,7 @@ def test_config():
 @pytest.mark.integration
 def test_vm_start_stop(test_workspace, test_config):
     """Should start and stop VM successfully."""
-    vm = VMManager(test_workspace, test_config)
+    vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
 
     vm.start()
 
@@ -41,7 +45,7 @@ def test_detect_runtime_prefers_docker(test_workspace, test_config):
     """Should prefer Docker when both runtimes are available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/' + cmd if cmd in ('docker', 'container') else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
         assert vm.runtime == 'docker'
         assert vm.runtime_cmd == 'docker'
 
@@ -50,7 +54,7 @@ def test_detect_runtime_falls_back_to_apple(test_workspace, test_config):
     """Should fall back to apple/container when Docker is not available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
         assert vm.runtime == 'apple'
         assert vm.runtime_cmd == 'container'
 
@@ -59,7 +63,7 @@ def test_detect_runtime_uses_docker_when_only_docker(test_workspace, test_config
     """Should use Docker when only Docker is available."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
         assert vm.runtime == 'docker'
         assert vm.runtime_cmd == 'docker'
 
@@ -68,14 +72,14 @@ def test_detect_runtime_raises_when_neither(test_workspace, test_config):
     """Should raise RuntimeError when no runtime found."""
     with patch('shutil.which', return_value=None):
         with pytest.raises(RuntimeError, match="No container runtime found"):
-            VMManager(test_workspace, test_config)
+            VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
 
 
 def test_explicit_runtime_docker(test_workspace, test_config):
     """Should use Docker when explicitly specified."""
     with patch('shutil.which') as mock_which:
         mock_which.return_value = '/usr/local/bin/docker'
-        vm = VMManager(test_workspace, test_config, runtime='docker')
+        vm = VMManager(test_workspace, test_config, runtime='docker', mounts=[_mount(test_workspace)])
         assert vm.runtime == 'docker'
         assert vm.runtime_cmd == 'docker'
 
@@ -84,7 +88,7 @@ def test_explicit_runtime_apple(test_workspace, test_config):
     """Should use apple/container when explicitly specified."""
     with patch('shutil.which') as mock_which:
         mock_which.return_value = '/usr/local/bin/container'
-        vm = VMManager(test_workspace, test_config, runtime='apple')
+        vm = VMManager(test_workspace, test_config, runtime='apple', mounts=[_mount(test_workspace)])
         assert vm.runtime == 'apple'
         assert vm.runtime_cmd == 'container'
 
@@ -93,14 +97,14 @@ def test_explicit_runtime_raises_if_not_available(test_workspace, test_config):
     """Should raise RuntimeError when explicit runtime not found."""
     with patch('shutil.which', return_value=None):
         with pytest.raises(RuntimeError, match="Docker runtime requested but not found"):
-            VMManager(test_workspace, test_config, runtime='docker')
+            VMManager(test_workspace, test_config, runtime='docker', mounts=[_mount(test_workspace)])
 
 
 def test_start_uses_apple_runtime(test_workspace, test_config, tmp_path):
     """start() should use 'container' command when runtime is apple."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
-        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
+        vm = VMManager(test_workspace, test_config, container_dir=tmp_path / 'session', mounts=[_mount(test_workspace)])
 
     with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
         with patch('subprocess.run') as mock_run:
@@ -127,7 +131,7 @@ def test_start_uses_docker_runtime(test_workspace, test_config, tmp_path):
     """start() should use 'docker' command when runtime is docker."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
-        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
+        vm = VMManager(test_workspace, test_config, container_dir=tmp_path / 'session', mounts=[_mount(test_workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
@@ -160,7 +164,7 @@ def test_start_sets_ssh_auth_sock_env(test_workspace, test_config, tmp_path):
     """
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
-        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
+        vm = VMManager(test_workspace, test_config, container_dir=tmp_path / 'session', mounts=[_mount(test_workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
@@ -188,7 +192,7 @@ def test_stop_uses_apple_commands(test_workspace, test_config):
     """stop() should use 'container stop' + 'container delete' for apple runtime."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
@@ -203,7 +207,7 @@ def test_stop_uses_docker_command(test_workspace, test_config):
     """stop() should use 'docker rm -f' for docker runtime."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
@@ -217,7 +221,7 @@ def test_exec_uses_detected_runtime(test_workspace, test_config):
     """exec() should use detected runtime command."""
     with patch('shutil.which') as mock_which:
         mock_which.side_effect = lambda cmd: '/usr/local/bin/container' if cmd == 'container' else None
-        vm = VMManager(test_workspace, test_config)
+        vm = VMManager(test_workspace, test_config, mounts=[_mount(test_workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
@@ -235,7 +239,7 @@ def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
     session_dir.mkdir()
 
     with patch('shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(test_workspace, test_config, session_dir)
+        vm = VMManager(test_workspace, test_config, container_dir=session_dir, mounts=[_mount(test_workspace)])
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -269,7 +273,7 @@ def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tm
     # No .claude directory exists
     with patch('vibedom.vm.Path.home', return_value=tmp_path):
         with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, session_dir)
+            vm = VMManager(test_workspace, test_config, container_dir=session_dir, mounts=[_mount(test_workspace)])
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -297,7 +301,7 @@ def test_vm_start_uses_host_proxy(tmp_path):
     session_dir = tmp_path / 'session'
     session_dir.mkdir()
 
-    vm = VMManager(workspace, config_dir, session_dir, runtime='docker')
+    vm = VMManager(workspace, config_dir, container_dir=session_dir, runtime='docker', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -325,8 +329,7 @@ def test_vm_start_with_project_network(tmp_path):
     """VMManager.start() should add --network flag when network specified."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                   runtime='docker', network='wapi_shared')
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', network='wapi_shared', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -353,8 +356,7 @@ def test_vm_start_network_ignored_with_apple_runtime(tmp_path):
     """VMManager.start() should warn and skip --network when runtime is apple."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                   runtime='apple', network='myproject_default')
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='apple', network='myproject_default', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
         with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
@@ -386,8 +388,7 @@ def test_vm_stop_stops_proxy(tmp_path):
     """VMManager.stop() should stop the ProxyManager."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                   runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', mounts=[_mount(workspace)])
 
     mock_proxy = MagicMock()
     vm._proxy = mock_proxy
@@ -402,9 +403,7 @@ def test_vm_start_adds_host_aliases_for_docker(tmp_path):
     """start() should add --add-host flags for each host_alias when runtime is docker."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                   runtime='docker',
-                   host_aliases={'wapi-redis': 'host', 'custom-svc': '10.0.0.5'})
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', host_aliases={'wapi-redis': 'host', 'custom-svc': '10.0.0.5'}, mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -432,9 +431,7 @@ def test_vm_start_adds_host_aliases_env_for_apple(tmp_path):
     """start() should set VIBEDOM_HOST_ALIASES env var for apple/container runtime."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                   runtime='apple',
-                   host_aliases={'wapi-redis': 'host', 'wapi-mysql': 'host'})
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='apple', host_aliases={'wapi-redis': 'host', 'wapi-mysql': 'host'}, mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.VMManager._apple_host_ip', return_value='192.168.64.1'):
         with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
@@ -470,9 +467,7 @@ def test_vm_start_passes_extra_env_vars(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                       runtime='docker',
-                       extra_env={'DB_PORT': 1234, 'DB_HOST': 'host.docker.internal'})
+        vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', extra_env={'DB_PORT': 1234, 'DB_HOST': 'host.docker.internal'}, mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -501,9 +496,7 @@ def test_vm_start_extra_env_does_not_override_proxy_vars(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session',
-                       runtime='docker',
-                       extra_env={'HTTP_PROXY': 'http://evil:9999'})
+        vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', extra_env={'HTTP_PROXY': 'http://evil:9999'}, mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -534,7 +527,7 @@ def test_host_git_identity_reads_global_config(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+        vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     def fake_run(cmd, *a, **k):
         if cmd[-1] == 'user.name':
@@ -559,7 +552,7 @@ def test_host_git_identity_returns_none_when_unset(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+        vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run', return_value=MagicMock(returncode=1, stdout='')):
         name, email = vm._host_git_identity()
@@ -587,7 +580,7 @@ def test_vm_start_injects_host_git_identity(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+        vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -613,7 +606,7 @@ def test_vm_start_omits_git_identity_when_host_has_none(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('vibedom.vm.shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+        vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -638,7 +631,7 @@ def test_vm_start_no_host_aliases_adds_no_add_host(tmp_path):
     """start() should not add --add-host flags when host_aliases is empty."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', tmp_path / 'session', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', container_dir=tmp_path / 'session', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -668,7 +661,7 @@ def test_vm_exists_returns_true_when_container_present(tmp_path):
     """exists() should return True when docker inspect succeeds."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
@@ -682,7 +675,7 @@ def test_vm_exists_returns_false_when_container_absent(tmp_path):
     """exists() should return False when docker inspect fails."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=1)
@@ -693,7 +686,7 @@ def test_vm_is_running_returns_true_when_running(tmp_path):
     """is_running() should return True when container is in running state."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout='running\n')
@@ -704,7 +697,7 @@ def test_vm_is_running_returns_false_when_stopped(tmp_path):
     """is_running() should return False when container is stopped or absent."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout='exited\n')
@@ -715,7 +708,7 @@ def test_vm_is_running_returns_false_when_inspect_fails(tmp_path):
     """is_running() should return False when inspect fails (container doesn't exist)."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout='')
@@ -726,7 +719,7 @@ def test_vm_pause_stops_without_removing_docker(tmp_path):
     """pause() should call 'docker stop' but NOT 'docker rm'."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
@@ -741,7 +734,7 @@ def test_vm_pause_stops_without_removing_apple(tmp_path):
     """pause() should call 'container stop' but NOT 'container delete' for apple runtime."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='apple')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='apple', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
@@ -756,7 +749,7 @@ def test_vm_restart_starts_stopped_container(tmp_path):
     """restart() should call 'docker start' and wait for readiness."""
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
-    vm = VMManager(workspace, tmp_path / 'config', runtime='docker')
+    vm = VMManager(workspace, tmp_path / 'config', runtime='docker', mounts=[_mount(workspace)])
 
     # First call (docker start) succeeds, second call (docker exec test) succeeds
     with patch('subprocess.run') as mock_run:
@@ -767,44 +760,14 @@ def test_vm_restart_starts_stopped_container(tmp_path):
     assert any(c[:2] == ['docker', 'start'] for c in calls)
 
 
-def test_vm_start_mounts_repo_from_container_dir(tmp_path):
-    """start() should mount repo from container_dir when provided."""
-    workspace = tmp_path / 'myapp'
-    workspace.mkdir()
-    container_dir = tmp_path / 'containers' / 'myapp'
-    container_dir.mkdir(parents=True)
-
-    vm = VMManager(workspace, tmp_path / 'config', container_dir=container_dir, runtime='docker')
-
-    with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-        mock_proxy = MagicMock()
-        mock_proxy.start.return_value = 54321
-        mock_proxy.ca_cert_path = None
-        mock_proxy_cls.return_value = mock_proxy
-
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass
-
-    run_calls = [c for c in mock_run.call_args_list if 'run' in c[0][0]]
-    assert run_calls
-    cmd = ' '.join(run_calls[0][0][0])
-    assert str(container_dir / 'repo') in cmd
-    assert ':/work/repo' in cmd
-
-
 def _run_argv(mock_run):
     """Extract the container-runtime 'run' argv from a patched subprocess.run."""
     return next(c[0][0] for c in mock_run.call_args_list if 'run' in c[0][0])
 
 
-def test_start_with_live_mounts_emits_rw_and_ro(test_config, tmp_path):
-    """With mounts set, start() bind-mounts each dir at /work/<name>, honoring ro,
-    and omits the read-only workspace mount and the /work/repo copy."""
+def test_start_bind_mounts_each_mount_at_work_name(test_config, tmp_path):
+    """start() bind-mounts each Mount at /work/<name>, honouring ro, and emits no
+    workspace/repo/session mounts and no VIBEDOM_LIVE flag."""
     www = tmp_path / 'www'
     www.mkdir()
     shared = tmp_path / 'shared'
@@ -831,36 +794,28 @@ def test_start_with_live_mounts_emits_rw_and_ro(test_config, tmp_path):
                     pass
 
     cmd = _run_argv(mock_run)
-    assert 'VIBEDOM_LIVE=1' in cmd
     assert f'{www}:/work/www' in cmd
     assert f'{shared}:/work/shared:ro' in cmd
-    assert not any(':/mnt/workspace:ro' in a for a in cmd)
-    assert not any(a.endswith(':/work/repo') for a in cmd)
-
-
-def test_start_without_mounts_still_mounts_workspace_ro(test_workspace, test_config, tmp_path):
-    """With no mounts, start() keeps the read-only workspace mount (unchanged)."""
-    with patch('shutil.which') as mock_which:
-        mock_which.side_effect = lambda cmd: '/usr/local/bin/docker' if cmd == 'docker' else None
-        vm = VMManager(test_workspace, test_config, session_dir=tmp_path / 'session')
-
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
-            mock_proxy = MagicMock()
-            mock_proxy.start.return_value = 54321
-            mock_proxy.ca_cert_path = None
-            mock_proxy_cls.return_value = mock_proxy
-            with patch('shutil.copy'):
-                try:
-                    vm.start()
-                except RuntimeError:
-                    pass
-
-    cmd = _run_argv(mock_run)
-    assert f'{test_workspace}:/mnt/workspace:ro' in cmd
-    assert any(a.endswith(':/work/repo') for a in cmd)
     assert 'VIBEDOM_LIVE=1' not in cmd
+    assert not any('/mnt/workspace' in a for a in cmd)
+    assert not any('/mnt/session' in a for a in cmd)
+    assert not any(a.endswith(':/work/repo') for a in cmd)
+    volumes = [cmd[i + 1] for i, a in enumerate(cmd) if a == '-v']
+    assert len(volumes) == 4  # config, www, shared, claude config
+
+
+def test_vm_requires_mounts(test_workspace, test_config, tmp_path):
+    with patch('shutil.which', return_value='/usr/local/bin/docker'):
+        with pytest.raises(ValueError, match='at least one mount'):
+            VMManager(test_workspace, test_config, container_dir=tmp_path / 'c', mounts=[])
+        with pytest.raises(ValueError, match='at least one mount'):
+            VMManager(test_workspace, test_config, container_dir=tmp_path / 'c')
+
+
+def test_vm_rejects_session_dir_kwarg(test_workspace, test_config, tmp_path):
+    with patch('shutil.which', return_value='/usr/local/bin/docker'):
+        with pytest.raises(TypeError):
+            VMManager(test_workspace, test_config, session_dir=tmp_path, mounts=[_mount(test_workspace)])
 
 
 # --- apple/container inspect status parsing (shape changed in apple/container 1.4.x) ---
@@ -899,7 +854,7 @@ def test_vm_is_running_apple_v14_status_object(tmp_path):
     workspace = tmp_path / 'myapp'
     workspace.mkdir()
     with patch('shutil.which', return_value='/usr/local/bin/container'):
-        vm = VMManager(workspace, tmp_path / 'config', runtime='apple')
+        vm = VMManager(workspace, tmp_path / 'config', runtime='apple', mounts=[_mount(workspace)])
 
     with patch('subprocess.run') as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_V14)

@@ -42,7 +42,7 @@ def parse_apple_inspect_status(stdout: str) -> Optional[str]:
 class VMManager:
     """Manages VM instances for sandbox sessions."""
 
-    def __init__(self, workspace: Path, config_dir: Path, session_dir: Optional[Path] = None,
+    def __init__(self, workspace: Path, config_dir: Path,
                  runtime: Optional[str] = None, network: Optional[str] = None,
                  base_image: Optional[str] = None,
                  host_aliases: Optional[dict] = None,
@@ -53,34 +53,27 @@ class VMManager:
         """Initialize VM manager.
 
         Args:
-            workspace: Path to workspace directory
-            config_dir: Path to config directory
-            session_dir: Path to session directory (for session logs mount and legacy repo mount)
-            runtime: Container runtime ('auto', 'docker', or 'apple'). If None, auto-detects.
-            network: Docker network name to join (for project DB/service access).
-            base_image: Project base image to layer vibedom on top of. If None, uses vibedom-alpine.
-            host_aliases: Dict of hostname -> IP mappings injected into container /etc/hosts.
-                Use 'host' as value to resolve to the host machine IP.
-            container_dir: Path for persistent container state (repo bind mount comes from here).
-                Takes precedence over session_dir for the repo mount.
-            memory: Memory limit for the container (e.g. '4g', '2048m'). Defaults to 4g on
-                apple/container (whose default 1GB is insufficient for Claude Code).
-            extra_env: Project-supplied environment variables (from vibedom.yml 'env:') injected
-                into the container as -e KEY=VALUE. Reserved vibedom vars (proxy/CA/SSH) cannot
-                be overridden and are silently skipped.
-            mounts: Optional list of Mount(host_path, name, read_only). When set, the container
-                runs in live-mount mode: each host_path is bind-mounted at /work/<name> (read-only
-                when read_only is set) and VIBEDOM_LIVE=1 is exported, replacing the read-only
-                /mnt/workspace mount and the /work/repo copy. When None, the copy+sync model is used.
+            workspace: Directory passed to `vibedom up`; names the container.
+            config_dir: ~/.vibedom (mounted read-only at /mnt/config).
+            runtime: 'docker', 'apple', or None to auto-detect.
+            network: Docker network to join (ignored on apple/container).
+            base_image: Project base image; the vibedom layer is built on top.
+            host_aliases: {hostname: ip|'host'} resolved inside the container.
+            container_dir: ~/.vibedom/containers/<name>; proxy logs live here.
+            memory: Memory limit (apple/container defaults to 4g).
+            mounts: Non-empty list of Mount(host_path, name, read_only), each
+                bind-mounted at /work/<name>. Required.
+            extra_env: Extra env vars from vibedom.yml `env:`.
         """
+        if not mounts:
+            raise ValueError("VMManager requires at least one mount")
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
-        self.session_dir = session_dir.resolve() if session_dir else None
         self.container_dir = container_dir.resolve() if container_dir else None
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.memory = memory
-        self.mounts = mounts
+        self.mounts = list(mounts)
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
@@ -304,14 +297,9 @@ class VMManager:
         # build-time network, so we build first while the network is clean.
         image = self._image_name()
 
-        # Start host proxy — logs go to container_dir or session_dir
-        proxy_log_dir = self.container_dir or self.session_dir
-        if proxy_log_dir is None:
-            raise RuntimeError("Either container_dir or session_dir must be set to start the VM")
-        self._proxy = ProxyManager(
-            log_dir=proxy_log_dir,
-            config_dir=self.config_dir,
-        )
+        if self.container_dir is None:
+            raise RuntimeError("container_dir must be set to start the VM")
+        self._proxy = ProxyManager(log_dir=self.container_dir, config_dir=self.config_dir)
         proxy_port = self._proxy.start()
 
         # Ensure mitmproxy conf dir exists so the CA cert will be readable via /mnt/config mount
@@ -366,30 +354,12 @@ class VMManager:
             '-v', f'{self.config_dir}:/mnt/config:ro',
         ]
 
-        if self.mounts:
-            # Live mode: bind-mount the real project dir(s) directly. No read-only
-            # workspace mount and no synced /work/repo copy. startup.sh detects
-            # this via VIBEDOM_LIVE and skips the clone/init step.
-            cmd += ['-e', 'VIBEDOM_LIVE=1']
-            for m in self.mounts:
-                spec = f'{m.host_path}:/work/{m.name}'
-                if m.read_only:
-                    spec += ':ro'
-                cmd += ['-v', spec]
-        else:
-            cmd += ['-v', f'{self.workspace}:/mnt/workspace:ro']
-            # Repo mount: prefer container_dir (persistent), fall back to session_dir (legacy)
-            if self.container_dir:
-                repo_dir = self.container_dir / 'repo'
-                repo_dir.mkdir(parents=True, exist_ok=True)
-                cmd += ['-v', f'{repo_dir}:/work/repo']
-            elif self.session_dir:
-                repo_dir = self.session_dir / 'repo'
-                repo_dir.mkdir(parents=True, exist_ok=True)
-                cmd += ['-v', f'{repo_dir}:/work/repo']
-
-        if self.session_dir:
-            cmd += ['-v', f'{self.session_dir}:/mnt/session']
+        # Project mounts: each host dir bind-mounted live at /work/<name>.
+        for m in self.mounts:
+            spec = f'{m.host_path}:/work/{m.name}'
+            if m.read_only:
+                spec += ':ro'
+            cmd += ['-v', spec]
 
         if self.network:
             if self.runtime == 'apple':
@@ -458,7 +428,7 @@ class VMManager:
                 f"Container command '{self.runtime_cmd}' not found."
             ) from None
 
-        # Wait for VM to be ready (increased timeout for git cloning)
+        # Wait for startup.sh to touch /tmp/.vm-ready
         for _ in range(60):
             result = subprocess.run(
                 [self.runtime_cmd, 'exec', self.container_name,
