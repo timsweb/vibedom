@@ -606,7 +606,7 @@ def status(workspace):
 @main.command('shell')
 @click.argument('workspace', required=False)
 def shell_cmd(workspace):
-    """Open a shell in a running container's workspace (/work/repo).
+    """Open a shell in a running container (cwd: /work/<name>, or /work with several mounts).
 
     WORKSPACE is the workspace directory name or path.
     If omitted, uses the only running container or prompts.
@@ -632,12 +632,16 @@ def shell_cmd(workspace):
         click.secho(f"No container found for '{workspace}'.", fg='red')
         sys.exit(1)
 
-    # Ensure proxy is alive before entering
     container_dir = containers_dir / Path(container_state.workspace).name
+    _refuse_legacy(container_state, container_dir)
+
+    # Ensure proxy is alive before entering
     _ensure_proxy_running(container_state, container_dir, config_dir)
 
     runtime_cmd = 'container' if container_state.runtime == 'apple' else 'docker'
-    workdir = '/work' if container_state.live else '/work/repo'
+    workspace_path = Path(container_state.workspace)
+    mounts = _resolve_mounts(workspace_path, ProjectConfig.load(workspace_path))
+    workdir = f'/work/{mounts[0].name}' if len(mounts) == 1 else '/work'
     cmd = [runtime_cmd, 'exec', '-it', '-w', workdir,
            container_state.container_name, 'bash', '--login']
     try:

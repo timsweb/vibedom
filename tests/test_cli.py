@@ -212,48 +212,6 @@ def test_proxy_restart_container_not_running(tmp_path):
     mock_pm.assert_not_called()
 
 
-def test_shell_live_container_uses_work_dir(tmp_path):
-    """shell into a live container opens /work, not /work/repo."""
-    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=True)
-    state.status = 'running'
-
-    runner = CliRunner()
-    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
-        mock_registry = MagicMock()
-        mock_registry.find.return_value = state
-        mock_registry_cls.return_value = mock_registry
-        with patch('vibedom.cli._ensure_proxy_running'):
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                result = runner.invoke(main, ['shell', 'myapp'], catch_exceptions=False)
-
-    assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert '-w' in cmd
-    assert cmd[cmd.index('-w') + 1] == '/work'
-
-
-def test_shell_non_live_container_uses_work_repo_dir(tmp_path):
-    """shell into a non-live container opens /work/repo (default behavior)."""
-    state = ContainerState.create(tmp_path / 'myapp', 'docker', live=False)
-    state.status = 'running'
-
-    runner = CliRunner()
-    with patch('vibedom.cli.ContainerRegistry') as mock_registry_cls:
-        mock_registry = MagicMock()
-        mock_registry.find.return_value = state
-        mock_registry_cls.return_value = mock_registry
-        with patch('vibedom.cli._ensure_proxy_running'):
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
-                result = runner.invoke(main, ['shell', 'myapp'], catch_exceptions=False)
-
-    assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert '-w' in cmd
-    assert cmd[cmd.index('-w') + 1] == '/work/repo'
-
-
 def test_live_container_status_apple_v14_status_object(tmp_path):
     """_live_container_status must return a string when apple/container 1.4+ nests state under status."""
     from vibedom.cli import _live_container_status
@@ -502,3 +460,62 @@ def test_status_marks_legacy_container_and_lists_others(tmp_path):
     lines = {l.split()[0]: l for l in result.output.splitlines() if l.startswith(('old', 'new'))}
     assert 'legacy' in lines['old'] and 'vibedom destroy' in lines['old']
     assert 'legacy' not in lines['new']
+
+
+def _shell_setup(tmp_path, yml=''):
+    proj = tmp_path / 'myapp'
+    proj.mkdir()
+    if yml:
+        (proj / 'vibedom.yml').write_text(yml)
+    home = tmp_path / 'home'
+    cdir = home / '.vibedom' / 'containers' / 'myapp'
+    cdir.mkdir(parents=True)
+    state = ContainerState.create(proj, 'docker')
+    state.mark_running(54321, 4242, cdir)
+    return proj, home
+
+
+def _invoke_shell(home):
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli._ensure_proxy_running'):
+            with patch('vibedom.cli.subprocess.run') as mock_run:
+                result = CliRunner().invoke(main, ['shell', 'myapp'], catch_exceptions=False)
+    return result, mock_run
+
+
+def test_shell_single_mount_opens_in_that_mount(tmp_path):
+    _, home = _shell_setup(tmp_path)
+    result, mock_run = _invoke_shell(home)
+    assert result.exit_code == 0, result.output
+    cmd = mock_run.call_args.args[0]
+    assert cmd[cmd.index('-w') + 1] == '/work/myapp'
+
+
+def test_shell_multiple_mounts_opens_in_work(tmp_path):
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    _, home = _shell_setup(tmp_path, f'mounts:\n  - {tmp_path / "a"}\n  - {tmp_path / "b"}\n')
+    result, mock_run = _invoke_shell(home)
+    assert result.exit_code == 0, result.output
+    cmd = mock_run.call_args.args[0]
+    assert cmd[cmd.index('-w') + 1] == '/work'
+
+
+def test_shell_workdir_follows_current_config(tmp_path):
+    """Editing vibedom.yml after creation changes the shell cwd without crashing."""
+    proj, home = _shell_setup(tmp_path)
+    (tmp_path / 'lib').mkdir()
+    (proj / 'vibedom.yml').write_text(f'mounts:\n  - .\n  - {tmp_path / "lib"}\n')
+    result, mock_run = _invoke_shell(home)
+    assert result.exit_code == 0, result.output
+    assert mock_run.call_args.args[0][mock_run.call_args.args[0].index('-w') + 1] == '/work'
+
+
+def test_shell_refuses_legacy_container(tmp_path):
+    _, home, _ = _legacy_setup(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.subprocess.run') as mock_run:
+            result = CliRunner().invoke(main, ['shell', 'old'])
+    assert result.exit_code == 1
+    assert 'vibedom destroy old' in result.output
+    mock_run.assert_not_called()
