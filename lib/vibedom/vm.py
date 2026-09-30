@@ -61,19 +61,18 @@ class VMManager:
             host_aliases: {hostname: ip|'host'} resolved inside the container.
             container_dir: ~/.vibedom/containers/<name>; proxy logs live here.
             memory: Memory limit (apple/container defaults to 4g).
-            mounts: Non-empty list of Mount(host_path, name, read_only), each
-                bind-mounted at /work/<name>. Required.
+            mounts: List of Mount(host_path, name, read_only), each bind-mounted
+                at /work/<name>. Required by start(); pause()/restart()/stop()/
+                exists()/is_running() only need the container name.
             extra_env: Extra env vars from vibedom.yml `env:`.
         """
-        if not mounts:
-            raise ValueError("VMManager requires at least one mount")
         self.workspace = workspace.resolve()
         self.config_dir = config_dir.resolve()
         self.container_dir = container_dir.resolve() if container_dir else None
         self.container_name = f'vibedom-{workspace.name}'
         self.runtime, self.runtime_cmd = self._detect_runtime(runtime)
         self.memory = memory
-        self.mounts = list(mounts)
+        self.mounts = list(mounts or [])
         self.network = network
         self.base_image = base_image
         self.host_aliases = host_aliases or {}
@@ -297,6 +296,8 @@ class VMManager:
         # build-time network, so we build first while the network is clean.
         image = self._image_name()
 
+        if not self.mounts:
+            raise ValueError("VMManager.start() requires at least one mount")
         if self.container_dir is None:
             raise RuntimeError("container_dir must be set to start the VM")
         self._proxy = ProxyManager(log_dir=self.container_dir, config_dir=self.config_dir)

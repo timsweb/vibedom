@@ -7,6 +7,7 @@ import signal as signal_module
 import sys
 import subprocess
 import click
+import yaml
 from pathlib import Path
 from typing import Optional
 from vibedom.ssh_keys import generate_deploy_key, get_public_key
@@ -82,7 +83,7 @@ def init(runtime: str):
 def reload_whitelist() -> None:
     """Reload the domain whitelist in every running container's proxy.
 
-    Sends SIGHUP to each host proxy so mitmproxy re-reads whitelist.txt
+    Sends SIGHUP to each host proxy so mitmproxy re-reads trusted_domains.txt
     without restarting containers.
     """
     registry = ContainerRegistry(Path.home() / '.vibedom' / 'containers')
@@ -513,10 +514,10 @@ def down(workspace):
 @click.argument('workspace', required=False)
 @click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
 def destroy(workspace, force):
-    """Remove a persistent container and its state.
+    """Remove a persistent container and vibedom's state for it.
 
     WORKSPACE is the workspace directory name or path.
-    This removes the container and its repo — use 'vibedom down' to just stop it.
+    Your mounted directories are never touched — use 'vibedom down' to just stop it.
     """
     config_dir = Path.home() / '.vibedom'
     containers_dir = config_dir / 'containers'
@@ -534,7 +535,8 @@ def destroy(workspace, force):
 
     name = Path(container_state.workspace).name
     if not force and not click.confirm(
-        f"Destroy container '{container_state.container_name}' and delete repo data for '{name}'?",
+        f"Destroy container '{container_state.container_name}' and delete vibedom's state for "
+        f"'{name}'? (your mounted directories are not touched)",
         default=False,
     ):
         click.echo("Aborted")
@@ -640,8 +642,12 @@ def shell_cmd(workspace):
 
     runtime_cmd = 'container' if container_state.runtime == 'apple' else 'docker'
     workspace_path = Path(container_state.workspace)
-    mounts = _resolve_mounts(workspace_path, ProjectConfig.load(workspace_path))
-    workdir = f'/work/{mounts[0].name}' if len(mounts) == 1 else '/work'
+    try:
+        mounts = _resolve_mounts(workspace_path, ProjectConfig.load(workspace_path))
+        workdir = f'/work/{mounts[0].name}' if len(mounts) == 1 else '/work'
+    except (ValueError, yaml.YAMLError) as e:
+        click.secho(f"Warning: could not read vibedom.yml ({e}); opening /work", fg='yellow')
+        workdir = '/work'
     cmd = [runtime_cmd, 'exec', '-it', '-w', workdir,
            container_state.container_name, 'bash', '--login']
     try:

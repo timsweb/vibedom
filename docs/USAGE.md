@@ -40,7 +40,7 @@ vibedom init
 
 This will:
 1. Generate an SSH deploy key at `~/.vibedom/keys/id_ed25519_vibedom`
-2. Create a default network whitelist at `~/.vibedom/config/trusted_domains.txt`
+2. Create a default network whitelist at `~/.vibedom/trusted_domains.txt`
 3. Build the container image (requires Docker or apple/container)
 
 Add the displayed public key to your GitLab account under **Settings → SSH Keys**. This lets the agent push and fetch your private repositories over SSH.
@@ -265,7 +265,7 @@ All outbound traffic is filtered through mitmproxy. Only domains in the whitelis
 ### Editing the Whitelist
 
 ```bash
-edit ~/.vibedom/config/trusted_domains.txt
+edit ~/.vibedom/trusted_domains.txt
 ```
 
 One domain per line. Subdomains are included automatically:
@@ -334,7 +334,7 @@ vibedom proxy-restart myapp
 ### "Domain not whitelisted"
 
 ```bash
-echo "new-domain.com" >> ~/.vibedom/config/trusted_domains.txt
+echo "new-domain.com" >> ~/.vibedom/trusted_domains.txt
 vibedom reload-whitelist
 ```
 

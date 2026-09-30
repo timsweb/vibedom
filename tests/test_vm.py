@@ -804,12 +804,19 @@ def test_start_bind_mounts_each_mount_at_work_name(test_config, tmp_path):
     assert len(volumes) == 4  # config, www, shared, claude config
 
 
-def test_vm_requires_mounts(test_workspace, test_config, tmp_path):
+def test_vm_start_requires_mounts_but_lifecycle_does_not(test_workspace, test_config, tmp_path):
+    """down/destroy build a VMManager without mounts just to stop/remove the
+    container; only start() needs the mount list."""
     with patch('shutil.which', return_value='/usr/local/bin/docker'):
-        with pytest.raises(ValueError, match='at least one mount'):
-            VMManager(test_workspace, test_config, container_dir=tmp_path / 'c', mounts=[])
-        with pytest.raises(ValueError, match='at least one mount'):
-            VMManager(test_workspace, test_config, container_dir=tmp_path / 'c')
+        vm = VMManager(test_workspace, test_config, container_dir=tmp_path / 'c')
+    with patch('subprocess.run') as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+        vm.pause()
+        vm.stop()
+        with patch('shutil.copy'):
+            with pytest.raises(ValueError, match='at least one mount'):
+                vm.start()
+    assert not any(a == 'run' for c in mock_run.call_args_list for a in c.args[0])
 
 
 def test_vm_rejects_session_dir_kwarg(test_workspace, test_config, tmp_path):

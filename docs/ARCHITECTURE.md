@@ -40,7 +40,7 @@ One persistent, live-mounted container per project (`vibedom up/down/destroy`):
 ##### Mounts (`mounts:` in `vibedom.yml`)
 - Default (no `mounts:`): the directory passed to `vibedom up` is mounted read-write at `/work/<basename>`. The CLI computes this in `_resolve_mounts()`.
 - Explicit `mounts:` is the complete list; the `up` directory is not auto-mounted. Entry forms: scalar `- <path>` (→ `/work/<basename>`, rw) or mapping `- {path:, as:, ro:}`; `.`/relative resolve against the `vibedom.yml` dir. Parsed into `Mount(host_path, name, read_only)` by `project_config.py`.
-- `VMManager` requires a non-empty mount list and emits one `-v` per mount.
+- `VMManager.start()` requires a non-empty mount list and emits one `-v` per mount; `down`/`destroy` construct it without mounts just to stop/remove.
 - One container can span multiple projects (each at `/work/<name>`), all sharing the same `base_image`. Git is the safety net for edits; network/DLP and pre-flight secret scanning (run per mount) are unchanged.
 - Mounts are fixed at container creation; `vibedom up --recreate` applies changes.
 
@@ -65,10 +65,9 @@ One persistent, live-mounted container per project (`vibedom up/down/destroy`):
 ~/.vibedom/
   keys/
     id_ed25519_vibedom          # SSH deploy key
-  config/
-    trusted_domains.txt         # network whitelist
-    gitleaks.toml               # DLP patterns (shared with pre-flight scanner)
-    mitmproxy/                  # CA cert and mitmproxy state
+  trusted_domains.txt           # network whitelist
+  gitleaks.toml                 # DLP patterns (shared with pre-flight scanner)
+  mitmproxy/                    # CA cert and mitmproxy state
   claude-config/                # Claude Code config (apple/container; Docker uses a named volume)
 
   containers/                   # one directory per container

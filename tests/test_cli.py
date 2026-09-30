@@ -519,3 +519,76 @@ def test_shell_refuses_legacy_container(tmp_path):
     assert result.exit_code == 1
     assert 'vibedom destroy old' in result.output
     mock_run.assert_not_called()
+
+
+# --- review fixes: down/destroy must not need a mount list; shell tolerates bad yml ---
+
+def _running_container(tmp_path, name='myapp'):
+    proj = tmp_path / name
+    proj.mkdir(exist_ok=True)
+    home = tmp_path / 'home'
+    cdir = home / '.vibedom' / 'containers' / name
+    cdir.mkdir(parents=True, exist_ok=True)
+    state = ContainerState.create(proj, 'docker')
+    state.mark_running(54321, 4242, cdir)
+    return proj, home, cdir
+
+
+def test_down_stops_container(tmp_path):
+    """down constructs a real VMManager (no mock) and must not trip the mounts check."""
+    _, home, cdir = _running_container(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.os.kill'):
+            with patch('vibedom.vm.subprocess.run') as mock_run:
+                with patch('shutil.which', return_value='/usr/local/bin/docker'):
+                    result = CliRunner().invoke(main, ['down', 'myapp'])
+
+    assert result.exit_code == 0, result.output
+    assert any('stop' in c.args[0] for c in mock_run.call_args_list)
+    assert ContainerState.load(cdir).status == 'stopped'
+
+
+def test_destroy_removes_container_and_state(tmp_path):
+    _, home, cdir = _running_container(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.os.kill'):
+            with patch('vibedom.vm.subprocess.run') as mock_run:
+                with patch('shutil.which', return_value='/usr/local/bin/docker'):
+                    result = CliRunner().invoke(main, ['destroy', 'myapp', '--force'])
+
+    assert result.exit_code == 0, result.output
+    assert any('rm' in c.args[0] for c in mock_run.call_args_list)
+    assert not cdir.exists()
+
+
+def test_destroy_works_for_legacy_container(tmp_path):
+    """The rescue instructions tell legacy users to run destroy — it must work."""
+    _, home, cdir = _legacy_setup(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.os.kill'):
+            with patch('vibedom.vm.subprocess.run'):
+                with patch('shutil.which', return_value='/usr/local/bin/docker'):
+                    result = CliRunner().invoke(main, ['destroy', 'old', '--force'])
+
+    assert result.exit_code == 0, result.output
+    assert not cdir.exists()
+
+
+def test_destroy_prompt_says_mounted_dirs_are_untouched(tmp_path):
+    _, home, _ = _running_container(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        result = CliRunner().invoke(main, ['destroy', 'myapp'], input='n\n')
+
+    assert result.exit_code == 0, result.output
+    assert 'repo data' not in result.output
+    assert 'not touched' in result.output
+    assert 'Aborted' in result.output
+
+
+def test_shell_falls_back_to_work_when_yml_is_invalid(tmp_path):
+    proj, home = _shell_setup(tmp_path, 'mountz:\n  - .\n')
+    result, mock_run = _invoke_shell(home)
+    assert result.exit_code == 0, result.output
+    assert 'vibedom.yml' in result.output
+    cmd = mock_run.call_args.args[0]
+    assert cmd[cmd.index('-w') + 1] == '/work'
