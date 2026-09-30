@@ -88,7 +88,7 @@ def test_up_already_running_says_files_are_bind_mounted(tmp_path):
 def test_cli_help_lists_only_container_commands():
     result = CliRunner().invoke(main, ['--help'])
     assert result.exit_code == 0
-    for cmd in ('init', 'up', 'down', 'destroy', 'status', 'shell',
+    for cmd in ('init', 'up', 'down', 'destroy', 'status', 'list', 'shell',
                 'reload-whitelist', 'proxy-restart'):
         assert cmd in result.output
     for gone in ('run', 'attach', 'review', 'merge', 'prune', 'housekeeping'):
@@ -592,3 +592,16 @@ def test_shell_falls_back_to_work_when_yml_is_invalid(tmp_path):
     assert 'vibedom.yml' in result.output
     cmd = mock_run.call_args.args[0]
     assert cmd[cmd.index('-w') + 1] == '/work'
+
+
+def test_list_is_an_alias_of_status(tmp_path):
+    _, home, _ = _running_container(tmp_path)
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli._live_container_status', return_value='running'):
+            status = CliRunner().invoke(main, ['status'])
+            listed = CliRunner().invoke(main, ['list'])
+
+    assert status.exit_code == 0, status.output
+    assert listed.exit_code == 0, listed.output
+    assert listed.output == status.output
+    assert 'vibedom-myapp' in listed.output

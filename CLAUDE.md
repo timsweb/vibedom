@@ -42,7 +42,7 @@
    - Interactive review UI for findings
 
 5. **CLI** (`lib/vibedom/cli.py`)
-   - `init`, `up`, `down`, `destroy`, `status`, `shell`, `reload-whitelist`, `proxy-restart`
+   - `init`, `up`, `down`, `destroy`, `status` (alias `list`), `shell`, `reload-whitelist`, `proxy-restart`
 
 ### Key Design Decisions
 
@@ -259,7 +259,7 @@ vibedom init
 vibedom up ~/projects/myapp          # create (or restart) container; ~/projects/myapp -> /work/myapp
 vibedom up myapp --recreate          # rebuild container from changed vibedom.yml (files untouched)
 vibedom shell myapp                  # open shell inside container
-vibedom status                       # show all container states (flags legacy ones)
+vibedom status                       # show all container states (flags legacy ones); `list` is an alias
 vibedom down myapp                   # stop (preserves filesystem)
 vibedom destroy myapp                # remove container + vibedom state (mounts untouched)
 

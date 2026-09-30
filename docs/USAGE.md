@@ -219,6 +219,7 @@ Two caveats:
 ```bash
 vibedom status          # all containers
 vibedom status myapp    # specific project
+vibedom list            # same as status
 ```
 
 Status is queried live from the container runtime — not from cached state on disk. After a reboot, a container that was running when you shut down will show as `stopped` rather than the stale `running` value stored on disk. Containers created before the live-mount-only change show as `legacy` with a reminder to destroy them.

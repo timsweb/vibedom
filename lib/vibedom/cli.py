@@ -565,7 +565,7 @@ def destroy(workspace, force):
 @main.command()
 @click.argument('workspace', required=False)
 def status(workspace):
-    """Show status of persistent containers."""
+    """Show status of containers (alias: list)."""
     config_dir = Path.home() / '.vibedom'
     containers_dir = config_dir / 'containers'
     registry = ContainerRegistry(containers_dir)
@@ -603,6 +603,9 @@ def status(workspace):
             f"{live_status:<10} "
             f"{proxy_info}"
         )
+
+
+main.add_command(status, name='list')
 
 
 @main.command('shell')
