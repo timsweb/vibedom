@@ -68,9 +68,11 @@ def init(runtime: str):
     try:
         rt = None if runtime == 'auto' else runtime
         _, runtime_cmd = VMManager._detect_runtime(rt)
-        if VMManager.image_exists(runtime_cmd):
+        if VMManager.image_is_current(runtime_cmd):
             click.echo("✓ VM image already up to date")
         else:
+            if VMManager.image_exists(runtime_cmd):
+                click.echo("Existing VM image is stale (Dockerfile changed) — rebuilding...")
             VMManager.build_image(rt)
             click.echo("✓ VM image built successfully")
     except RuntimeError as e:
@@ -289,6 +291,23 @@ def _refuse_legacy(state: ContainerState, container_dir: Path) -> None:
     sys.exit(1)
 
 
+def _ensure_base_image_current(runtime: str, project_config) -> None:
+    """Rebuild the vibedom-alpine base image when the Dockerfile fingerprint drifts.
+
+    Skipped when the project uses a `base_image:` layer — that layer is rebuilt
+    at container-create time, and its FROM will pick up a fresh base if the user
+    reruns `vibedom init` or `vibedom build`. We only guard the plain base path
+    here because that's what silently goes stale across upgrades.
+    """
+    if project_config and project_config.base_image:
+        return
+    _, runtime_cmd = VMManager._detect_runtime(runtime)
+    if VMManager.image_is_current(runtime_cmd):
+        return
+    click.echo("Base image is stale (Dockerfile changed) — rebuilding...")
+    VMManager.build_image(runtime)
+
+
 def _run_setup_commands(vm, project_config) -> None:
     """Run vibedom.yml `setup:` commands inside a freshly created container.
 
@@ -414,6 +433,7 @@ def up(workspace, runtime, recreate):
         # Container no longer exists in the runtime but the state file and repo are intact.
         # Repo data is safe in the bind-mount directory — just recreate the container.
         click.echo(f"Container '{vm.container_name}' not found. Recreating with existing repo...")
+        _ensure_base_image_current(resolved_runtime, project_config)
         try:
             vm.start()
         except RuntimeError as e:
@@ -432,6 +452,7 @@ def up(workspace, runtime, recreate):
             click.secho("Cancelled", fg='yellow')
             sys.exit(1)
 
+        _ensure_base_image_current(resolved_runtime, project_config)
         click.echo(f"Starting container '{vm.container_name}'...")
         try:
             vm.start()

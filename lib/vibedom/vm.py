@@ -1,5 +1,6 @@
 """VM lifecycle management."""
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -149,6 +150,64 @@ class VMManager:
         return result.returncode == 0
 
     @staticmethod
+    def _dockerfile_fingerprint() -> str:
+        """Hash the Dockerfile and every build-context file it may embed.
+
+        Any change to Dockerfile.alpine or files it COPYs (startup.sh,
+        mitmproxy_addon.py, config assets) changes the fingerprint, which
+        surfaces stale images to image_is_current().
+        """
+        container_dir = Path(__file__).parent / 'container'
+        h = hashlib.sha256()
+        for path in sorted(container_dir.rglob('*')):
+            if not path.is_file():
+                continue
+            if any(part in {'__pycache__', '.cache'} for part in path.parts):
+                continue
+            rel = path.relative_to(container_dir).as_posix()
+            h.update(rel.encode())
+            h.update(b'\0')
+            h.update(path.read_bytes())
+            h.update(b'\0')
+        return h.hexdigest()[:16]
+
+    @staticmethod
+    def image_is_current(runtime_cmd: str) -> bool:
+        """True iff the built image's fingerprint label matches the current sources.
+
+        A missing image, missing label, or mismatched label all count as stale — the
+        caller should rebuild. apple/container and docker both expose labels via
+        `image inspect`, but under slightly different JSON shapes; both are handled.
+        """
+        if not VMManager.image_exists(runtime_cmd):
+            return False
+        result = subprocess.run(
+            [runtime_cmd, 'image', 'inspect', 'vibedom-alpine:latest'],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return False
+        try:
+            data = json.loads(result.stdout)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if not isinstance(data, list) or not data:
+            return False
+        entry = data[0]
+        labels = None
+        cfg = entry.get('Config') if isinstance(entry, dict) else None
+        if isinstance(cfg, dict):
+            labels = cfg.get('Labels')
+        if labels is None and isinstance(entry, dict):
+            # apple/container shape: {"config": {"labels": {...}}, ...}
+            cfg2 = entry.get('config')
+            if isinstance(cfg2, dict):
+                labels = cfg2.get('labels') or cfg2.get('Labels')
+        if not isinstance(labels, dict):
+            return False
+        return labels.get('vibedom.fingerprint') == VMManager._dockerfile_fingerprint()
+
+    @staticmethod
     def build_image(runtime: Optional[str] = None) -> None:
         """Build the vibedom-alpine container image.
 
@@ -162,8 +221,10 @@ class VMManager:
         if not dockerfile.exists():
             raise RuntimeError(f"Dockerfile not found at {dockerfile}")
 
+        fingerprint = VMManager._dockerfile_fingerprint()
         subprocess.run(
             [runtime_cmd, 'build', '-t', 'vibedom-alpine:latest',
+             '--label', f'vibedom.fingerprint={fingerprint}',
              '-f', str(dockerfile), str(container_dir)],
             check=True
         )
