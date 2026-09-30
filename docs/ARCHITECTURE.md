@@ -32,7 +32,7 @@ One persistent, live-mounted container per project (`vibedom up/down/destroy`):
 - **Legacy detection**: a `container.json` without `live: true` was written by the removed copy+sync model. `ContainerState.load()` marks it `legacy`; `up`, `shell` and `--recreate` refuse it with rescue instructions and `status` flags it. `destroy` is the cleanup path.
 
 #### VM Configuration
-- Alpine Linux base image (or project image via `base_image:` in `vibedom.yml`, with the vibedom layer built on top by `Dockerfile.layer`)
+- Alpine Linux base image (or project image via `base_image:` in `vibedom.yml`, with the vibedom layer built on top by `Dockerfile.layer`; Alpine and Debian/Ubuntu bases are supported, so `startup.sh` must stay POSIX `sh`, since Debian's `/bin/sh` is dash)
 - Bind mounts: `~/.vibedom` read-only at `/mnt/config`, the shared Claude config volume at `/root/.claude`, and one `/work/<name>` per project mount
 - Explicit proxy via `HTTP_PROXY`/`HTTPS_PROXY` environment variables
 - `startup.sh` sets git identity, starts the SSH agent with the deploy key (replacing a stale socket after `container stop`/`start`), configures the CA bundle, restores Claude config, and `cd`s to `/work`

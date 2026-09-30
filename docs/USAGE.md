@@ -134,6 +134,8 @@ mounts:                           # optional: which host dirs to mount (see belo
     ro: true                      #   read-only mount
 ```
 
+`base_image:` can be Alpine- or Debian/Ubuntu-based: vibedom layers its tools on top with `apk` or `apt-get` (git, bash, curl, ca-certificates, openssh-client, ripgrep, Claude Code). Images that set a non-root `USER` are fine; the vibedom layer runs as root. Other distros (no `apk`/`apt-get`) fail the build with a clear message.
+
 `setup:` commands run when the container is created (first `up`, `--recreate`, or recreation after the container went missing), not on restarts. Packages installed during setup persist in the container.
 
 `env:` vars are baked into the container at creation time (like `network`/`memory`/`mounts`). Changing them in `vibedom.yml` takes effect after `vibedom up --recreate`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.

@@ -110,3 +110,22 @@ def test_no_key_file_is_a_noop(agent_env, tmp_path):
     result = _run_start_ssh_agent(agent_env)
     assert result.returncode == 0, result.stderr
     assert not Path(agent_env['SSH_AGENT_SOCK']).exists()
+
+
+def test_stale_socket_is_replaced_under_errexit(agent_env):
+    """startup.sh runs with `set -e`. The liveness probe `ssh-add -l` exits 2
+    on a stale socket; if that bare command trips errexit, the whole script
+    dies before the agent is replaced and the container never becomes ready.
+    """
+    _make_stale_socket(agent_env['SSH_AGENT_SOCK'])
+
+    script = ('set -e\n' + _extract_function('start_ssh_agent')
+              + '\nstart_ssh_agent\necho done\n')
+    result = subprocess.run(
+        ['sh', '-c', script], env=agent_env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'done' in result.stdout
+    keys = _agent_keys(agent_env)
+    assert keys.returncode == 0, keys.stderr
+    assert 'ED25519' in keys.stdout
