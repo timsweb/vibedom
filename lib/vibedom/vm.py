@@ -309,7 +309,7 @@ class VMManager:
         if proxy_log_dir is None:
             raise RuntimeError("Either container_dir or session_dir must be set to start the VM")
         self._proxy = ProxyManager(
-            session_dir=proxy_log_dir,
+            log_dir=proxy_log_dir,
             config_dir=self.config_dir,
         )
         proxy_port = self._proxy.start()

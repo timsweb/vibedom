@@ -182,7 +182,7 @@ def _ensure_proxy_running(
     if _proxy_is_alive(container_state.proxy_pid):
         return None  # Already running
 
-    proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+    proxy = ProxyManager(log_dir=container_dir, config_dir=config_dir)
     try:
         proxy.start(port=container_state.proxy_port)
     except RuntimeError as e:
@@ -234,7 +234,7 @@ def _restart_container_proxy(container: ContainerState, config_dir: Path) -> Non
             click.echo(f"Proxy (PID {container.proxy_pid}) was already stopped")
 
     # Start fresh proxy on the same port so the container's HTTP_PROXY stays valid
-    proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+    proxy = ProxyManager(log_dir=container_dir, config_dir=config_dir)
     try:
         proxy.start(port=container.proxy_port)
     except RuntimeError as e:
@@ -369,7 +369,7 @@ def up(workspace, runtime, recreate, yes):
             container_state = ContainerState.create(
                 workspace_path, resolved_runtime, live=bool(mounts)
             )
-        proxy = ProxyManager(session_dir=container_dir, config_dir=config_dir)
+        proxy = ProxyManager(log_dir=container_dir, config_dir=config_dir)
         try:
             proxy.start(port=container_state.proxy_port)
         except RuntimeError as e:
