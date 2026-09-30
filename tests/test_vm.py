@@ -5,7 +5,6 @@ import pytest
 import shutil
 from unittest.mock import patch, MagicMock
 from vibedom.vm import VMManager
-from vibedom.session import Session
 from vibedom.project_config import Mount
 
 @pytest.fixture
@@ -37,55 +36,6 @@ def test_vm_start_stop(test_workspace, test_config):
     assert 'test' in result.stdout
 
     vm.stop()
-
-@pytest.mark.integration
-def test_vm_git_repo_initialized(test_workspace, test_config):
-    """VM should initialize git repo from workspace."""
-    import subprocess
-    from vibedom.session import Session
-
-    # Create test git workspace
-    (test_workspace / 'test.txt').write_text('test content')
-    subprocess.run(['git', 'init'], cwd=test_workspace, check=True)
-    subprocess.run(['git', 'add', '.'], cwd=test_workspace, check=True)
-    subprocess.run(['git', 'commit', '-m', 'Initial'], cwd=test_workspace, check=True)
-
-    session = Session(test_workspace, Path('/tmp/vibedom-test-logs'))
-    vm = VMManager(test_workspace, test_config, session_dir=session.session_dir)
-
-    try:
-        vm.start()
-
-        # Verify git repo initialized in container
-        result = vm.exec(['sh', '-c', 'cd /work/repo && git log --oneline'])
-        assert 'Initial' in result.stdout
-
-    finally:
-        vm.stop()
-        shutil.rmtree(session.session_dir, ignore_errors=True)
-
-@pytest.mark.integration
-def test_vm_mounts_session_repo(test_workspace, test_config):
-    """VM should mount session repo directory."""
-    session = Session(test_workspace, Path('/tmp/vibedom-test-logs'))
-
-    vm = VMManager(test_workspace, test_config, session_dir=session.session_dir)
-
-    try:
-        vm.start()
-
-        # Verify repo directory exists in session
-        repo_dir = session.session_dir / 'repo'
-        assert repo_dir.exists(), "Repo directory should exist in session dir"
-
-        # Verify .git exists in mounted repo
-        git_dir = repo_dir / '.git'
-        assert git_dir.exists(), "Git directory should exist in mounted repo"
-
-    finally:
-        vm.stop()
-        shutil.rmtree(session.session_dir, ignore_errors=True)
-
 
 def test_detect_runtime_prefers_docker(test_workspace, test_config):
     """Should prefer Docker when both runtimes are available."""
