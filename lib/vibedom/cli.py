@@ -14,7 +14,7 @@ from vibedom.gitleaks import scan_workspace
 from vibedom.review_ui import review_findings
 from vibedom.whitelist import create_default_whitelist
 from vibedom.vm import VMManager, parse_apple_inspect_status
-from vibedom.project_config import ProjectConfig
+from vibedom.project_config import ProjectConfig, Mount
 from vibedom.proxy import ProxyManager
 from vibedom.container_state import ContainerState, ContainerRegistry
 
@@ -249,6 +249,45 @@ def _restart_container_proxy(container: ContainerState, config_dir: Path) -> Non
     click.echo(f"✅ Proxy restarted on port {proxy.port} (PID {proxy.pid})")
 
 
+def _resolve_mounts(workspace_path: Path, project_config) -> list[Mount]:
+    """Mounts for a container: vibedom.yml `mounts:` if set, else the workspace itself.
+
+    Example:
+        # no vibedom.yml, or one without mounts:
+        _resolve_mounts(Path('~/projects/myapp'), None)
+        -> [Mount(host_path=~/projects/myapp, name='myapp', read_only=False)]
+    """
+    if project_config and project_config.mounts:
+        return project_config.mounts
+    return [Mount(host_path=workspace_path, name=workspace_path.name, read_only=False)]
+
+
+LEGACY_MESSAGE = """\
+Container '{container}' was created with the old copy+sync model, which has
+been removed. Its repo copy is still at:
+
+  {repo}
+
+That is a normal git repo — push or copy anything you need from it, then:
+
+  vibedom destroy {name}
+  vibedom up {workspace}
+"""
+
+
+def _refuse_legacy(state: ContainerState, container_dir: Path) -> None:
+    """Exit with rescue instructions if `state` is a pre-live-mount container."""
+    if not state.legacy:
+        return
+    click.secho(LEGACY_MESSAGE.format(
+        container=state.container_name,
+        repo=container_dir / 'repo',
+        name=Path(state.workspace).name,
+        workspace=state.workspace,
+    ), fg='red')
+    sys.exit(1)
+
+
 def _run_setup_commands(vm, project_config) -> None:
     """Run vibedom.yml `setup:` commands inside a freshly created container.
 
@@ -273,15 +312,15 @@ def _run_setup_commands(vm, project_config) -> None:
               help='Container runtime (auto-detect, docker, or apple)')
 @click.option('--recreate', is_flag=True,
               help='Remove the existing container and create it again from the current '
-                   'vibedom.yml (picks up new mounts, env, image changes). Repo data and '
-                   'container state are kept; setup commands re-run.')
-@click.option('--yes', '-y', '--force', 'yes', is_flag=True,
-              help='Skip the confirmation prompt for --recreate')
-def up(workspace, runtime, recreate, yes):
+                   'vibedom.yml (picks up new mounts, env, image changes). Container '
+                   'state is kept; setup commands re-run. Your files are untouched — '
+                   'they are bind-mounted, not copied.')
+def up(workspace, runtime, recreate):
     """Start a persistent project container.
 
-    Creates the container on first use; restarts it if stopped; does nothing if already running.
-    With --recreate, an existing container is removed and rebuilt from the current vibedom.yml.
+    The project directory (or the dirs listed under `mounts:` in vibedom.yml)
+    is bind-mounted live under /work. Creates the container on first use,
+    restarts it if stopped, does nothing if already running.
     """
     workspace_path = Path(workspace).resolve()
     if not workspace_path.is_dir():
@@ -302,17 +341,16 @@ def up(workspace, runtime, recreate, yes):
         sys.exit(1)
 
     project_config = ProjectConfig.load(workspace_path)
-    mounts = project_config.mounts if project_config else None
-    if mounts:
-        for m in mounts:
-            if not m.host_path.is_dir():
-                click.secho(
-                    f"Error: mount path is not a directory: {m.host_path}", fg='red'
-                )
-                sys.exit(1)
+    mounts = _resolve_mounts(workspace_path, project_config)
+    for m in mounts:
+        if not m.host_path.is_dir():
+            click.secho(f"Error: mount path is not a directory: {m.host_path}", fg='red')
+            sys.exit(1)
 
     registry = ContainerRegistry(containers_dir)
     container_state = registry.find(workspace_path.name)
+    if container_state is not None:
+        _refuse_legacy(container_state, container_dir)
 
     vm = VMManager(
         workspace_path, config_dir,
@@ -327,13 +365,6 @@ def up(workspace, runtime, recreate, yes):
     )
 
     if recreate and vm.exists():
-        if not (mounts or yes) and not click.confirm(
-            f"Recreate container '{vm.container_name}'? The container filesystem is discarded "
-            f"(the repo copy at {container_dir / 'repo'} is kept).",
-            default=False,
-        ):
-            click.echo("Aborted")
-            return
         click.echo(f"Removing container '{vm.container_name}' for recreation...")
         if container_state and container_state.proxy_pid:
             try:
@@ -348,18 +379,14 @@ def up(workspace, runtime, recreate, yes):
             VMManager.build_image(resolved_runtime)
         if container_state is None:
             container_state = ContainerState.create(
-                workspace_path, resolved_runtime, live=bool(mounts)
+                workspace_path, resolved_runtime
             )
-        container_state.live = bool(mounts)
 
     if vm.is_running() and not recreate:
         click.echo(f"Container '{vm.container_name}' is already running.")
         if container_state:
             _ensure_proxy_running(container_state, container_dir, config_dir)
-        if container_state and container_state.live:
-            click.echo("Live-mount container — files are shared with your host.")
-        else:
-            click.echo(f"Repo: {container_dir / 'repo'}")
+        click.echo("Files are bind-mounted from your host — edit them directly.")
         return
 
     if vm.exists() and not recreate:
@@ -367,7 +394,7 @@ def up(workspace, runtime, recreate, yes):
         click.echo(f"Restarting container '{vm.container_name}'...")
         if container_state is None:
             container_state = ContainerState.create(
-                workspace_path, resolved_runtime, live=bool(mounts)
+                workspace_path, resolved_runtime
             )
         proxy = ProxyManager(log_dir=container_dir, config_dir=config_dir)
         try:
@@ -397,12 +424,9 @@ def up(workspace, runtime, recreate, yes):
     else:
         # First-time creation
         click.echo("Scanning for secrets...")
-        if mounts:
-            findings = []
-            for m in mounts:
-                findings.extend(scan_workspace(m.host_path))
-        else:
-            findings = scan_workspace(workspace_path)
+        findings = []
+        for m in mounts:
+            findings.extend(scan_workspace(m.host_path))
         if not review_findings(findings):
             click.secho("Cancelled", fg='yellow')
             sys.exit(1)
@@ -415,7 +439,7 @@ def up(workspace, runtime, recreate, yes):
             sys.exit(1)
 
         container_state = ContainerState.create(
-            workspace_path, resolved_runtime, live=bool(mounts)
+            workspace_path, resolved_runtime
         )
         if vm._proxy:
             container_state.mark_running(vm._proxy.port, vm._proxy.pid, container_dir)
@@ -424,27 +448,13 @@ def up(workspace, runtime, recreate, yes):
 
         _run_setup_commands(vm, project_config)
 
-    if mounts:
-        click.echo(f"\nContainer running (live mount)!")
-        click.echo("Mounted:")
-        for m in mounts:
-            ro = ' (ro)' if m.read_only else ''
-            click.echo(f"  {m.host_path} -> /work/{m.name}{ro}")
-        click.echo(f"\nTo open a shell:")
-        click.echo(f"  vibedom shell {workspace_path.name}")
-        click.echo(f"\nTo stop:")
-        click.echo(f"  vibedom down {workspace_path.name}")
-    else:
-        click.echo(f"\nContainer running!")
-        click.echo(f"Workspace: {workspace_path}")
-        click.echo(f"Repo: {container_dir / 'repo'}")
-        click.echo(f"\nTo sync code:")
-        click.echo(f"  vibedom pull {workspace_path.name}   # container -> host")
-        click.echo(f"  vibedom push {workspace_path.name}   # host -> container")
-        click.echo(f"\nTo open a shell:")
-        click.echo(f"  vibedom shell {workspace_path.name}")
-        click.echo(f"\nTo stop:")
-        click.echo(f"  vibedom down {workspace_path.name}")
+    click.echo("\nContainer running!")
+    click.echo("Mounted:")
+    for m in mounts:
+        ro = ' (ro)' if m.read_only else ''
+        click.echo(f"  {m.host_path} -> /work/{m.name}{ro}")
+    click.echo(f"\nTo open a shell:\n  vibedom shell {workspace_path.name}")
+    click.echo(f"\nTo stop:\n  vibedom down {workspace_path.name}")
 
 
 @main.command()
@@ -631,307 +641,3 @@ def shell_cmd(workspace):
     except FileNotFoundError:
         click.secho(f"Error: {runtime_cmd} command not found", fg='red')
         sys.exit(1)
-
-
-def _validate_sync_paths(paths: tuple, src: Path) -> list[Path]:
-    """Validate and resolve path arguments for sync commands.
-
-    Each path must be relative (no leading '/') and must resolve to a location
-    inside src after resolving any '..' components.  Absolute paths and path
-    traversals that escape src are rejected to prevent accidental writes
-    outside the workspace or container repo.
-
-    Args:
-        paths: Raw path strings provided by the user.
-        src: The source root directory that all paths must stay within.
-
-    Returns:
-        List of resolved absolute Path objects, each guaranteed to be inside src.
-
-    Raises:
-        click.ClickException: If any path is invalid or escapes src.
-    """
-    validated = []
-    src_resolved = src.resolve()
-    for raw in paths:
-        if Path(raw).is_absolute():
-            raise click.ClickException(
-                f"Path argument must be relative, not absolute: '{raw}'"
-            )
-        resolved = (src_resolved / raw).resolve()
-        try:
-            resolved.relative_to(src_resolved)
-        except ValueError:
-            raise click.ClickException(
-                f"Path '{raw}' escapes the source directory — path traversal not allowed"
-            )
-        validated.append(resolved)
-    return validated
-
-
-def _make_workspace_relative(raw: str, workspace_root: Path, cwd: Path | None = None) -> str:
-    """Resolve a path argument relative to CWD if CWD is inside workspace_root.
-
-    Returns a workspace-root-relative path string. Falls back to raw unchanged
-    if CWD is outside workspace_root or if the resolved path escapes the root.
-    """
-    if cwd is None:
-        cwd = Path.cwd()
-    cwd = cwd.resolve()
-    workspace_resolved = workspace_root.resolve()
-    try:
-        cwd.relative_to(workspace_resolved)
-    except ValueError:
-        return raw
-    try:
-        return str((cwd / raw).resolve().relative_to(workspace_resolved))
-    except ValueError:
-        return raw
-
-
-def _build_rsync_cmd(
-    src: Path,
-    dst: Path,
-    paths: tuple,
-    delete: bool,
-    dry_run: bool,
-    extra_excludes: list,
-) -> list:
-    """Build an rsync command for syncing src to dst.
-
-    Args:
-        src: Source directory (trailing slash makes rsync sync its contents)
-        dst: Destination directory
-        paths: Specific sub-paths to sync (relative to src). If empty, sync all.
-            All paths must have already been validated via _validate_sync_paths.
-        delete: Include --delete flag (destructive)
-        dry_run: Include --dry-run flag
-        extra_excludes: Additional patterns to exclude beyond .gitignore
-    """
-    cmd = ['rsync', '-av']
-
-    if dry_run:
-        cmd.append('--dry-run')
-
-    # Exclude .git always
-    cmd += ['--exclude=.git/']
-
-    # Use .gitignore rules from the workspace (source side)
-    cmd += ['--filter=:- .gitignore']
-
-    for pattern in extra_excludes:
-        cmd.append(f'--exclude={pattern}')
-
-    if delete:
-        cmd.append('--delete')
-
-    if paths:
-        # --relative with /./  preserves the path structure in the destination.
-        # e.g. /src_root/./sub/dir/file.py lands at /dst/sub/dir/file.py
-        cmd.append('--relative')
-        src_resolved = src.resolve()
-        dst_resolved = dst.resolve()
-        for raw in paths:
-            cmd.append(f'{src_resolved}/./{raw}')
-        cmd.append(str(dst_resolved))
-    else:
-        cmd.append(f'{src}/')
-        cmd.append(str(dst))
-
-    return cmd
-
-
-def _find_deletions(cmd: list[str]) -> list[str]:
-    """Run a silent rsync dry-run and return paths that would be deleted.
-
-    Parses lines beginning with 'deleting ' from rsync's stdout.
-    """
-    dry_cmd = list(cmd)
-    if '--dry-run' not in dry_cmd:
-        dry_cmd.append('--dry-run')
-    result = subprocess.run(dry_cmd, capture_output=True, text=True)
-    return [
-        line[len('deleting '):]
-        for line in result.stdout.splitlines()
-        if line.startswith('deleting ')
-    ]
-
-
-@main.command()
-@click.argument('workspace')
-@click.argument('paths', nargs=-1)
-@click.option('--delete', is_flag=True, help='Also remove files in host that are absent in container')
-@click.option('--dry-run', '-n', is_flag=True, help='Show what would be synced without doing it')
-@click.option('--yes', '-y', is_flag=True, help='Skip confirmation for full-tree sync')
-@click.option('--force', '-f', is_flag=True, help='Skip all confirmations')
-def pull(workspace, paths, delete, dry_run, yes, force):
-    """Sync code from container to host workspace.
-
-    WORKSPACE is the workspace directory name or path.
-    PATHS are optional relative paths to sync (e.g. src/ app/).
-    If no paths given, syncs everything (respecting .gitignore) after confirmation.
-    """
-    config_dir = Path.home() / '.vibedom'
-    containers_dir = config_dir / 'containers'
-    registry = ContainerRegistry(containers_dir)
-
-    container_state = registry.find(workspace)
-    if container_state is None:
-        click.secho(f"No container found for '{workspace}'.", fg='red')
-        sys.exit(1)
-
-    if container_state.live:
-        click.echo(
-            "This is a live-mount container — changes are already on your host; "
-            "no sync needed."
-        )
-        return
-
-    workspace_path = Path(container_state.workspace)
-    container_dir = containers_dir / workspace_path.name
-    repo_dir = container_dir / 'repo'
-
-    if paths:
-        paths = tuple(_make_workspace_relative(p, workspace_path) for p in paths)
-        click.echo("Resolved: " + ", ".join(paths))
-        try:
-            _validate_sync_paths(paths, repo_dir)
-        except click.ClickException as e:
-            click.secho(f"Error: {e.format_message()}", fg='red')
-            sys.exit(1)
-
-    # Full-tree sync without --dry-run requires confirmation
-    if not paths and not dry_run and not yes and not force:
-        if not click.confirm(
-            f"Sync all files from container repo to {workspace_path.name}?",
-            default=False,
-        ):
-            click.echo("Aborted")
-            return
-
-    project_config = ProjectConfig.load(workspace_path)
-    extra_excludes = (project_config.sync_exclude or []) if project_config else []
-
-    cmd = _build_rsync_cmd(
-        src=repo_dir,
-        dst=workspace_path,
-        paths=paths,
-        delete=delete,
-        dry_run=dry_run,
-        extra_excludes=extra_excludes,
-    )
-
-    if delete and not force and not dry_run:
-        deletions = _find_deletions(cmd)
-        if deletions:
-            click.echo("These files will be deleted from the host:")
-            for f in deletions:
-                click.echo(f"  {f}")
-            if not click.confirm("\nProceed?", default=False):
-                click.echo("Aborted")
-                return
-
-    if dry_run:
-        click.echo("Dry run — showing what would be synced:")
-    else:
-        click.echo(f"Pulling from container to {workspace_path.name}...")
-
-    result = subprocess.run(cmd, capture_output=False, text=True)
-    if result.returncode != 0:
-        click.secho("rsync failed", fg='red')
-        sys.exit(result.returncode)
-
-    if not dry_run:
-        click.echo("Done.")
-
-
-@main.command()
-@click.argument('workspace')
-@click.argument('paths', nargs=-1)
-@click.option('--delete', is_flag=True, help='Also remove files in container that are absent on host')
-@click.option('--dry-run', '-n', is_flag=True, help='Show what would be synced without doing it')
-@click.option('--yes', '-y', is_flag=True, help='Skip confirmation for full-tree sync')
-@click.option('--force', '-f', is_flag=True, help='Skip all confirmations')
-def push(workspace, paths, delete, dry_run, yes, force):
-    """Sync code from host workspace to container.
-
-    WORKSPACE is the workspace directory name or path.
-    PATHS are optional relative paths to sync (e.g. src/ app/).
-    If no paths given, syncs everything (respecting .gitignore) after confirmation.
-    """
-    config_dir = Path.home() / '.vibedom'
-    containers_dir = config_dir / 'containers'
-    registry = ContainerRegistry(containers_dir)
-
-    container_state = registry.find(workspace)
-    if container_state is None:
-        click.secho(f"No container found for '{workspace}'.", fg='red')
-        sys.exit(1)
-
-    if container_state.live:
-        click.echo(
-            "This is a live-mount container — changes are already on your host; "
-            "no sync needed."
-        )
-        return
-
-    workspace_path = Path(container_state.workspace)
-    container_dir = containers_dir / workspace_path.name
-    repo_dir = container_dir / 'repo'
-
-    if paths:
-        paths = tuple(_make_workspace_relative(p, workspace_path) for p in paths)
-        click.echo("Resolved: " + ", ".join(paths))
-        try:
-            _validate_sync_paths(paths, workspace_path)
-        except click.ClickException as e:
-            click.secho(f"Error: {e.format_message()}", fg='red')
-            sys.exit(1)
-
-    # Full-tree sync without --dry-run requires confirmation
-    if not paths and not dry_run and not yes and not force:
-        if not click.confirm(
-            f"Sync all files from {workspace_path.name} to container repo?",
-            default=False,
-        ):
-            click.echo("Aborted")
-            return
-
-    project_config = ProjectConfig.load(workspace_path)
-    extra_excludes = (project_config.sync_exclude or []) if project_config else []
-
-    cmd = _build_rsync_cmd(
-        src=workspace_path,
-        dst=repo_dir,
-        paths=paths,
-        delete=delete,
-        dry_run=dry_run,
-        extra_excludes=extra_excludes,
-    )
-
-    if delete and not force and not dry_run:
-        deletions = _find_deletions(cmd)
-        if deletions:
-            click.echo("These files will be deleted from the container:")
-            for f in deletions:
-                click.echo(f"  {f}")
-            if not click.confirm("\nProceed?", default=False):
-                click.echo("Aborted")
-                return
-
-    if dry_run:
-        click.echo("Dry run — showing what would be synced:")
-    else:
-        click.echo(f"Pushing from {workspace_path.name} to container...")
-
-    result = subprocess.run(cmd, capture_output=False, text=True)
-    if result.returncode != 0:
-        click.secho("rsync failed", fg='red')
-        sys.exit(result.returncode)
-
-    if not dry_run:
-        click.echo("Done.")
-
-
-if __name__ == '__main__':
-    main()

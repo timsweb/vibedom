@@ -8,7 +8,7 @@ from vibedom.cli import main
 from vibedom.container_state import ContainerState
 
 
-def test_up_live_mounts_passes_mounts_and_persists_live(tmp_path):
+def test_up_with_mounts_passes_exactly_that_list(tmp_path):
     """up with a mounts: config passes normalized mounts to VMManager and marks the
     container live; it does not scan or mount a /work/repo copy."""
     proj = tmp_path / 'agent'
@@ -37,7 +37,7 @@ def test_up_live_mounts_passes_mounts_and_persists_live(tmp_path):
     assert [(m.name, m.read_only) for m in mounts] == [('www', False)]
 
     state = ContainerState.load(home / '.vibedom' / 'containers' / 'agent')
-    assert state.live is True
+    assert state.legacy is False
 
 
 def test_up_live_mount_missing_dir_fails_fast(tmp_path):
@@ -60,14 +60,14 @@ def test_up_live_mount_missing_dir_fails_fast(tmp_path):
     mock_vm_cls.assert_not_called()
 
 
-def test_up_already_running_live_container_shows_live_note_not_repo_path(tmp_path):
+def test_up_already_running_says_files_are_bind_mounted(tmp_path):
     """The already-running branch must not print a misleading Repo: copy path for live containers."""
     proj = tmp_path / 'agent'
     proj.mkdir()
     home = tmp_path / 'home'
     cdir = home / '.vibedom' / 'containers' / 'agent'
     cdir.mkdir(parents=True)
-    state = ContainerState.create(proj, 'docker', live=True)
+    state = ContainerState.create(proj, 'docker')
     state.status = 'running'
     state.save(cdir)
 
@@ -82,7 +82,7 @@ def test_up_already_running_live_container_shows_live_note_not_repo_path(tmp_pat
                 result = runner.invoke(main, ['up', str(proj)], catch_exceptions=False)
 
     assert result.exit_code == 0, result.output
-    assert 'Live-mount container' in result.output
+    assert 'bind-mounted' in result.output
     assert 'Repo:' not in result.output
 
 def test_cli_help_lists_only_container_commands():
@@ -131,7 +131,6 @@ def _make_container(tmp_path, name='myapp', status='running',
         container_name=f'vibedom-{name}',
         runtime='docker',
         created_at='2026-06-15T00:00:00',
-        repo_dir=str(container_dir / 'repo'),
         status=status,
         proxy_port=proxy_port,
         proxy_pid=proxy_pid,
@@ -260,7 +259,7 @@ def test_live_container_status_apple_v14_status_object(tmp_path):
     from vibedom.cli import _live_container_status
     c = ContainerState(
         workspace=str(tmp_path / 'myapp'), container_name='vibedom-myapp',
-        runtime='apple', status='running', created_at='2026-09-16T00:00:00', repo_dir=str(tmp_path / 'repo'),
+        runtime='apple', status='running', created_at='2026-09-16T00:00:00',
     )
     v14 = '[{"id": "vibedom-myapp", "configuration": {}, "status": {"state": "running", "networks": []}}]'
     legacy = '[{"configuration": {}, "status": "stopped", "networks": []}]'
@@ -275,7 +274,7 @@ def test_live_container_status_apple_v14_status_object(tmp_path):
         assert _live_container_status(c) == 'gone'
 
 
-def _recreate_setup(tmp_path, *, live: bool, yml: str = '') -> tuple:
+def _recreate_setup(tmp_path, *, yml: str = '') -> tuple:
     """Project dir + saved running ContainerState for an existing container."""
     proj = tmp_path / 'agent'
     proj.mkdir()
@@ -284,9 +283,7 @@ def _recreate_setup(tmp_path, *, live: bool, yml: str = '') -> tuple:
     home = tmp_path / 'home'
     cdir = home / '.vibedom' / 'containers' / 'agent'
     cdir.mkdir(parents=True)
-    (cdir / 'repo').mkdir()
-    (cdir / 'repo' / 'keep.txt').write_text('data')
-    state = ContainerState.create(proj, 'docker', live=live)
+    state = ContainerState.create(proj, 'docker')
     state.mark_running(54321, 4242, cdir)
     return proj, home, cdir
 
@@ -316,7 +313,7 @@ def test_up_recreate_removes_container_and_starts_fresh(tmp_path):
     without prompting (nothing is lost for live mounts)."""
     target = tmp_path / 'www'
     target.mkdir()
-    proj, home, cdir = _recreate_setup(tmp_path, live=True, yml=f'mounts:\n  - {target}\n')
+    proj, home, cdir = _recreate_setup(tmp_path, yml=f'mounts:\n  - {target}\n')
 
     result, mock_vm_cls, mock_vm, mock_kill = _invoke_recreate(proj, home, ['--recreate'])
 
@@ -328,14 +325,13 @@ def test_up_recreate_removes_container_and_starts_fresh(tmp_path):
     state = ContainerState.load(cdir)
     assert state.status == 'running'
     assert state.proxy_port == 60000
-    assert state.live is True
 
 
 def test_up_recreate_reruns_setup_commands(tmp_path):
     proj, home, _ = _recreate_setup(
-        tmp_path, live=False, yml='setup:\n  - echo one\n  - echo two\n'
+        tmp_path, yml='setup:\n  - echo one\n  - echo two\n'
     )
-    result, _, mock_vm, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+    result, _, mock_vm, _ = _invoke_recreate(proj, home, ['--recreate'])
 
     assert result.exit_code == 0, result.output
     cmds = [c.args[0] for c in mock_vm.exec.call_args_list]
@@ -343,8 +339,8 @@ def test_up_recreate_reruns_setup_commands(tmp_path):
 
 
 def test_up_recreate_rebuilds_base_image_when_no_base_image_configured(tmp_path):
-    proj, home, _ = _recreate_setup(tmp_path, live=False)
-    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+    proj, home, _ = _recreate_setup(tmp_path)
+    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate'])
 
     assert result.exit_code == 0, result.output
     mock_vm_cls.build_image.assert_called_once_with('docker')
@@ -352,37 +348,11 @@ def test_up_recreate_rebuilds_base_image_when_no_base_image_configured(tmp_path)
 
 def test_up_recreate_skips_base_image_rebuild_when_project_layer_used(tmp_path):
     """With base_image: the project layer rebuilds on create anyway (COPY startup.sh)."""
-    proj, home, _ = _recreate_setup(tmp_path, live=False, yml='base_image: php:8.3\n')
-    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
+    proj, home, _ = _recreate_setup(tmp_path, yml='base_image: php:8.3\n')
+    result, mock_vm_cls, _, _ = _invoke_recreate(proj, home, ['--recreate'])
 
     assert result.exit_code == 0, result.output
     mock_vm_cls.build_image.assert_not_called()
-
-
-def test_up_recreate_preserves_repo_dir(tmp_path):
-    proj, home, cdir = _recreate_setup(tmp_path, live=False)
-    result, _, _, _ = _invoke_recreate(proj, home, ['--recreate', '--yes'])
-
-    assert result.exit_code == 0, result.output
-    assert (cdir / 'repo' / 'keep.txt').read_text() == 'data'
-
-
-def test_up_recreate_copy_sync_container_prompts_and_aborts_on_no(tmp_path):
-    proj, home, _ = _recreate_setup(tmp_path, live=False)
-    runner = CliRunner()
-    with patch('vibedom.cli.Path.home', return_value=home):
-        with patch('vibedom.cli.VMManager') as mock_vm_cls:
-            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
-            mock_vm = MagicMock()
-            mock_vm.is_running.return_value = True
-            mock_vm.exists.return_value = True
-            mock_vm_cls.return_value = mock_vm
-            result = runner.invoke(main, ['up', str(proj), '--recreate'], input='n\n')
-
-    assert result.exit_code == 0, result.output
-    assert 'Aborted' in result.output
-    mock_vm.stop.assert_not_called()
-    mock_vm.start.assert_not_called()
 
 
 def test_up_recreate_without_existing_container_is_plain_create(tmp_path):
@@ -400,9 +370,116 @@ def test_up_recreate_without_existing_container_is_plain_create(tmp_path):
 def test_up_recreates_missing_container_and_reruns_setup(tmp_path):
     """Container gone from the runtime but state intact: setup must run again, since
     anything it installed into the container filesystem is gone."""
-    proj, home, _ = _recreate_setup(tmp_path, live=False, yml='setup:\n  - echo one\n')
+    proj, home, _ = _recreate_setup(tmp_path, yml='setup:\n  - echo one\n')
     result, _, mock_vm, _ = _invoke_recreate(proj, home, [], exists=False)
 
     assert result.exit_code == 0, result.output
     assert 'Recreating' in result.output
     assert [c.args[0] for c in mock_vm.exec.call_args_list] == [['sh', '-c', 'echo one']]
+
+
+def _up_first_run(proj, home, args=()):
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.scan_workspace', return_value=[]) as mock_scan:
+            with patch('vibedom.cli.review_findings', return_value=True):
+                with patch('vibedom.cli.VMManager') as mock_vm_cls:
+                    mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+                    mock_vm = MagicMock()
+                    mock_vm.is_running.return_value = False
+                    mock_vm.exists.return_value = False
+                    mock_vm._proxy = MagicMock(port=54321, pid=99999)
+                    mock_vm_cls.return_value = mock_vm
+                    result = runner.invoke(main, ['up', str(proj), *args], catch_exceptions=False)
+    return result, mock_vm_cls, mock_scan
+
+
+def test_up_without_yml_mounts_the_workspace_itself(tmp_path):
+    proj = tmp_path / 'myapp'
+    proj.mkdir()
+    result, mock_vm_cls, mock_scan = _up_first_run(proj, tmp_path / 'home')
+
+    assert result.exit_code == 0, result.output
+    mounts = mock_vm_cls.call_args.kwargs['mounts']
+    assert [(m.host_path, m.name, m.read_only) for m in mounts] == [(proj.resolve(), 'myapp', False)]
+    mock_scan.assert_called_once_with(proj.resolve())
+    assert '/work/myapp' in result.output
+
+
+def test_up_yml_without_mounts_uses_default_mount(tmp_path):
+    proj = tmp_path / 'myapp'
+    proj.mkdir()
+    (proj / 'vibedom.yml').write_text('setup:\n  - echo hi\n')
+    result, mock_vm_cls, _ = _up_first_run(proj, tmp_path / 'home')
+
+    assert result.exit_code == 0, result.output
+    mounts = mock_vm_cls.call_args.kwargs['mounts']
+    assert [m.name for m in mounts] == ['myapp']
+
+
+def test_up_with_mounts_does_not_auto_mount_workspace(tmp_path):
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    (tmp_path / 'www').mkdir()
+    (proj / 'vibedom.yml').write_text(f'mounts:\n  - {tmp_path / "www"}\n')
+    result, mock_vm_cls, _ = _up_first_run(proj, tmp_path / 'home')
+
+    assert result.exit_code == 0, result.output
+    assert [m.name for m in mock_vm_cls.call_args.kwargs['mounts']] == ['www']
+
+
+def _legacy_setup(tmp_path):
+    proj = tmp_path / 'old'
+    proj.mkdir()
+    home = tmp_path / 'home'
+    cdir = home / '.vibedom' / 'containers' / 'old'
+    cdir.mkdir(parents=True)
+    (cdir / 'container.json').write_text(json.dumps({
+        'workspace': str(proj), 'container_name': 'vibedom-old', 'runtime': 'docker',
+        'created_at': '2026-01-01T00:00:00', 'repo_dir': str(cdir / 'repo'),
+        'status': 'stopped', 'live': False,
+    }))
+    return proj, home, cdir
+
+
+def test_up_refuses_legacy_container(tmp_path):
+    proj, home, cdir = _legacy_setup(tmp_path)
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+            result = runner.invoke(main, ['up', str(proj)])
+
+    assert result.exit_code == 1
+    assert 'copy+sync' in result.output
+    assert str(cdir / 'repo') in result.output
+    assert 'vibedom destroy old' in result.output
+    mock_vm_cls.return_value.start.assert_not_called()
+
+
+def test_up_recreate_refuses_legacy_container(tmp_path):
+    proj, home, _ = _legacy_setup(tmp_path)
+    runner = CliRunner()
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+            result = runner.invoke(main, ['up', str(proj), '--recreate'])
+
+    assert result.exit_code == 1
+    assert 'vibedom destroy old' in result.output
+    mock_vm_cls.return_value.stop.assert_not_called()
+
+
+def test_up_recreate_has_no_yes_flag(tmp_path):
+    proj = tmp_path / 'myapp'
+    proj.mkdir()
+    result = CliRunner().invoke(main, ['up', str(proj), '--recreate', '--yes'])
+    assert result.exit_code == 2
+    assert 'No such option' in result.output
+
+
+def test_up_has_no_pull_or_push():
+    result = CliRunner().invoke(main, ['pull', 'x'])
+    assert result.exit_code == 2
+    result = CliRunner().invoke(main, ['push', 'x'])
+    assert result.exit_code == 2
