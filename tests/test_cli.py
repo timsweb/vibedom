@@ -10,7 +10,7 @@ from vibedom.container_state import ContainerState
 
 def test_up_with_mounts_passes_exactly_that_list(tmp_path):
     """up with a mounts: config passes normalized mounts to VMManager and marks the
-    container live; it does not scan or mount a /work/repo copy."""
+    container; the up directory itself is not auto-mounted."""
     proj = tmp_path / 'agent'
     proj.mkdir()
     target = tmp_path / 'www'

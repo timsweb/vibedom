@@ -29,7 +29,7 @@ ENV PATH="/root/.local/bin:$PATH"
 RUN echo 'export PATH="/root/.local/bin:$PATH"' > /etc/profile.d/local-bin.sh
 
 # Create directories
-RUN mkdir -p /mnt/workspace /work /mnt/config /var/log/vibedom
+RUN mkdir -p /work /mnt/config /var/log/vibedom
 
 # Add startup script
 COPY startup.sh /usr/local/bin/

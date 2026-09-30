@@ -235,11 +235,11 @@ def test_exec_uses_detected_runtime(test_workspace, test_config):
 
 def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
     """start() should mount vibedom-claude-config volume for Claude persistence."""
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
 
     with patch('shutil.which', return_value='/usr/bin/docker'):
-        vm = VMManager(test_workspace, test_config, container_dir=session_dir, mounts=[_mount(test_workspace)])
+        vm = VMManager(test_workspace, test_config, container_dir=log_dir, mounts=[_mount(test_workspace)])
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -267,13 +267,13 @@ def test_start_mounts_claude_volume(test_workspace, test_config, tmp_path):
 
 def test_start_skips_claude_mounts_if_not_exists(test_workspace, test_config, tmp_path):
     """start() should not fail if ~/.claude doesn't exist."""
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
 
     # No .claude directory exists
     with patch('vibedom.vm.Path.home', return_value=tmp_path):
         with patch('shutil.which', return_value='/usr/bin/docker'):
-            vm = VMManager(test_workspace, test_config, container_dir=session_dir, mounts=[_mount(test_workspace)])
+            vm = VMManager(test_workspace, test_config, container_dir=log_dir, mounts=[_mount(test_workspace)])
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -298,10 +298,10 @@ def test_vm_start_uses_host_proxy(tmp_path):
     workspace.mkdir()
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
-    session_dir = tmp_path / 'session'
-    session_dir.mkdir()
+    log_dir = tmp_path / 'session'
+    log_dir.mkdir()
 
-    vm = VMManager(workspace, config_dir, container_dir=session_dir, runtime='docker', mounts=[_mount(workspace)])
+    vm = VMManager(workspace, config_dir, container_dir=log_dir, runtime='docker', mounts=[_mount(workspace)])
 
     with patch('vibedom.vm.ProxyManager') as mock_proxy_cls:
         mock_proxy = MagicMock()
@@ -815,7 +815,7 @@ def test_vm_requires_mounts(test_workspace, test_config, tmp_path):
 def test_vm_rejects_session_dir_kwarg(test_workspace, test_config, tmp_path):
     with patch('shutil.which', return_value='/usr/local/bin/docker'):
         with pytest.raises(TypeError):
-            VMManager(test_workspace, test_config, session_dir=tmp_path, mounts=[_mount(test_workspace)])
+            VMManager(test_workspace, test_config, log_dir=tmp_path, mounts=[_mount(test_workspace)])
 
 
 # --- apple/container inspect status parsing (shape changed in apple/container 1.4.x) ---
