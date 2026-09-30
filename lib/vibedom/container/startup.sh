@@ -17,11 +17,8 @@ ensure_git_identity() {
 }
 
 WORK_DIR="${WORK_DIR:-/work}"
-REPO_DIR="${REPO_DIR:-/work/repo}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-/mnt/workspace}"
 
-# Prepare the working tree. In live-mount mode (VIBEDOM_LIVE) the real project
-# dir(s) are bind-mounted under $WORK_DIR, so there is nothing to clone or init.
+# Projects are bind-mounted live under $WORK_DIR by vibedom; nothing to clone.
 # Start (or reuse) the SSH agent holding the deploy key.
 #
 # The socket lives at a fixed path so `exec` sessions can find it. After
@@ -54,49 +51,8 @@ start_ssh_agent() {
 }
 
 init_repo() {
-    if [ -n "$VIBEDOM_LIVE" ]; then
-        echo "Live mount mode: using mounted project(s) directly"
-        cd "$WORK_DIR"
-        return
-    fi
-
-    if [ -d "$REPO_DIR/.git" ]; then
-        echo "Existing repo found at $REPO_DIR, skipping clone"
-        cd "$REPO_DIR"
-    elif [ -d "$WORKSPACE_DIR/.git" ]; then
-        echo "Cloning git repository from workspace..."
-        git clone "$WORKSPACE_DIR/.git" "$REPO_DIR"
-        cd "$REPO_DIR"
-
-        # Checkout the same branch user is on
-        CURRENT_BRANCH=$(git -C "$WORKSPACE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-        echo "Detected branch: $CURRENT_BRANCH"
-
-        if git show-ref --verify --quiet refs/heads/"$CURRENT_BRANCH"; then
-            git checkout "$CURRENT_BRANCH"
-        else
-            git checkout -b "$CURRENT_BRANCH"
-        fi
-
-        echo "Working on branch: $CURRENT_BRANCH"
-
-        # Copy .env* files from workspace (typically gitignored but needed at runtime)
-        for env_file in "$WORKSPACE_DIR"/.env "$WORKSPACE_DIR"/.env.*; do
-            [ -f "$env_file" ] && cp "$env_file" "$REPO_DIR"/ && echo "Copied $(basename $env_file)"
-        done
-    else
-        echo "Non-git workspace, initializing fresh repository..."
-        mkdir -p "$REPO_DIR"
-        rsync -a --exclude='.git' "$WORKSPACE_DIR"/ "$REPO_DIR"/ || true
-        cd "$REPO_DIR"
-        git init
-
-        # Set a default identity so the initial snapshot commit succeeds
-        ensure_git_identity
-
-        git add .
-        git commit -m "Initial snapshot from vibedom session" || echo "No files to commit"
-    fi
+    echo "Using live-mounted project(s) under $WORK_DIR"
+    cd "$WORK_DIR"
 }
 
 init_repo
@@ -104,7 +60,7 @@ init_repo
 # Apply the default agent identity only if the user has not set their own
 ensure_git_identity
 
-echo "Git repository initialized at $WORK_DIR"
+echo "Working directory: $WORK_DIR"
 
 # Restore Claude config from persistent volume
 # Claude Code writes to /root/.claude.json via atomic rename, which breaks symlinks.
