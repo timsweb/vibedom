@@ -44,6 +44,11 @@ start_ssh_agent() {
         fi
         echo "Removing stale SSH agent socket"
         rm -f "$sock"
+    elif [ -e "$sock" ] || [ -L "$sock" ]; then
+        # Anything else left at the path makes `ssh-agent -a` fail with
+        # "Address in use", which `set -e` turns into a dead container.
+        echo "Removing non-socket file at $sock"
+        rm -f "$sock"
     fi
 
     ssh-agent -a "$sock" > /dev/null

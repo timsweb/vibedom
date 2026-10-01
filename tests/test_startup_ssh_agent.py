@@ -129,3 +129,22 @@ def test_stale_socket_is_replaced_under_errexit(agent_env):
     keys = _agent_keys(agent_env)
     assert keys.returncode == 0, keys.stderr
     assert 'ED25519' in keys.stdout
+
+
+def test_non_socket_at_sock_path_is_replaced_under_errexit(agent_env):
+    """A leftover non-socket file at the socket path (seen after apple/container
+    stop/start) skipped the stale-socket branch, so `ssh-agent -a` failed with
+    'Address in use' and `set -e` killed startup.sh before /tmp/.vm-ready.
+    """
+    Path(agent_env['SSH_AGENT_SOCK']).write_text('')
+
+    script = ('set -e\n' + _extract_function('start_ssh_agent')
+              + '\nstart_ssh_agent\necho done\n')
+    result = subprocess.run(
+        ['sh', '-c', script], env=agent_env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'done' in result.stdout
+    keys = _agent_keys(agent_env)
+    assert keys.returncode == 0, keys.stderr
+    assert 'ED25519' in keys.stdout
