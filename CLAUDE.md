@@ -48,6 +48,7 @@
 
 **Single model: persistent, live-mounted**
 - `vibedom up <dir>` creates one long-lived container per project; `down`/`up` stop and restart it with the filesystem preserved
+- `base_image:` is an image reference, or a Dockerfile path if it starts with `./`, `../`, `/` or `~` (dir → `<dir>/Dockerfile`; resolved against the `vibedom.yml` folder). The path is built as `vibedom-base-<container>`, then the vibedom layer goes on top; both rebuild on every create
 - Default mount: with no `mounts:` in `vibedom.yml`, `<dir>` is mounted rw at `/work/<basename>`. A `mounts:` list is the complete list (the `up` dir is not auto-mounted; add `- .`). Scalar or `{path, as, ro}` entries; one container can span several projects, all sharing one `base_image`
 - No copy, no sync: the agent edits real files; git is the safety net. Network/DLP and per-mount secret scanning are unchanged
 - Legacy containers (created by the removed copy+sync model) are refused with rescue instructions and must be destroyed and recreated
