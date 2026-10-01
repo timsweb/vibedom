@@ -279,6 +279,36 @@ def test_no_scrub_test_domain_email():
         assert not result.was_scrubbed, f"{email} triggered a finding"
 
 
+def test_no_scrub_git_ssh_urls():
+    """git@host SSH remotes are an SSH user, not a personal email."""
+    scrubber = make_scrubber()
+    for text in ['git clone git@github.com:org/repo.git',
+                 'url = ssh://git@gitlab.company.io/team/app.git',
+                 'remote: git@bitbucket.org:o/r.git']:
+        result = scrubber.scrub(text)
+        assert result.text == text, f"{text!r} should not be scrubbed"
+        assert not result.was_scrubbed
+
+
+def test_no_scrub_noreply_addresses():
+    """No-reply role addresses (e.g. Claude's commit co-author) are not PII."""
+    scrubber = make_scrubber()
+    for text in ['Co-Authored-By: Claude <noreply@anthropic.com>',
+                 'From: no-reply@company.com']:
+        result = scrubber.scrub(text)
+        assert result.text == text, f"{text!r} should not be scrubbed"
+        assert not result.was_scrubbed
+
+
+def test_local_part_exemption_is_exact():
+    """Only the exact git/noreply local parts are exempt, not lookalikes."""
+    scrubber = make_scrubber()
+    for email in ['gituser@company.com', 'noreply.alice@company.com',
+                  'alice.git@company.com']:
+        result = scrubber.scrub(f"email = '{email}'")
+        assert "[REDACTED_EMAIL]" in result.text, f"{email} should be scrubbed"
+
+
 def test_real_email_still_scrubbed_alongside_exempt():
     """Real emails are still scrubbed even when exempt ones are present."""
     scrubber = make_scrubber()

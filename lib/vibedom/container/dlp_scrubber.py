@@ -118,13 +118,16 @@ class DLPScrubber:
         r'@(?:example\.(?:com|org|net|edu)|test\.(?:com|org|net)|localhost|invalid)$',
         re.IGNORECASE,
     )
+    # Local parts that are never a person: the SSH user in git@host remotes, and
+    # no-reply role addresses (e.g. Claude's commit co-author).
+    _EMAIL_EXEMPT_LOCAL = re.compile(r'^(?:git|noreply|no-reply)@', re.IGNORECASE)
 
     def _load_pii_patterns(self) -> None:
         """Load built-in PII detection patterns."""
         pii_defs = [
             ('email', 'Email Address',
              r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b',
-             [self._EMAIL_EXEMPT]),
+             [self._EMAIL_EXEMPT, self._EMAIL_EXEMPT_LOCAL]),
             ('credit_card', 'Credit Card Number',
              r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',
              []),
