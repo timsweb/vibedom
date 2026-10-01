@@ -136,6 +136,15 @@ mounts:                           # optional: which host dirs to mount (see belo
 
 `base_image:` can be Alpine- or Debian/Ubuntu-based: vibedom layers its tools on top with `apk` or `apt-get` (git, bash, curl, ca-certificates, openssh-client, ripgrep, Claude Code). Images that set a non-root `USER` are fine; the vibedom layer runs as root. Other distros (no `apk`/`apt-get`) fail the build with a clear message.
 
+`base_image:` can also point at a Dockerfile instead of an image, so the environment lives in a Dockerfile rather than a long `setup:` list. A value starting with `./`, `../`, `/` or `~` is a path (write `./Dockerfile`, not `Dockerfile`), resolved relative to the `vibedom.yml` folder:
+
+```yaml
+base_image: ./docker/dev              # directory → builds ./docker/dev/Dockerfile, context ./docker/dev
+# base_image: ./docker/dev.Dockerfile # file → builds that file, context its folder
+```
+
+vibedom builds it as `vibedom-base-<container>` and layers its tools on top, so the Dockerfile only needs your project's environment (same Alpine/Debian/Ubuntu rule as above). It is rebuilt whenever the container is created; after editing the Dockerfile run `vibedom up --recreate` (the build cache keeps unchanged steps fast). Like the vibedom layer, the build runs on the host with normal network access — not through the proxy/DLP.
+
 `setup:` commands run when the container is created (first `up`, `--recreate`, or recreation after the container went missing), not on restarts. Packages installed during setup persist in the container.
 
 `env:` vars are baked into the container at creation time (like `network`/`memory`/`mounts`). Changing them in `vibedom.yml` takes effect after `vibedom up --recreate`, not on a plain `down`/`up` restart. Reserved vibedom vars (the proxy, CA-bundle, and SSH-agent variables) cannot be overridden — supplying one prints a warning and is ignored.

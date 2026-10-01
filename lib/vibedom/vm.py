@@ -11,6 +11,10 @@ from typing import Optional
 
 from vibedom.proxy import ProxyManager
 
+# A base_image starting with one of these is a Dockerfile path, not an image
+# reference (image references can contain '/' but never start with these).
+DOCKERFILE_PATH_PREFIXES = ('./', '../', '/', '~')
+
 
 def parse_apple_inspect_status(stdout: str) -> Optional[str]:
     """Extract the runtime state string from ``container inspect`` JSON output.
@@ -233,9 +237,38 @@ class VMManager:
         """Return the image to run. Builds project layer if base_image set."""
         if not self.base_image:
             return 'vibedom-alpine:latest'
+        base = self.base_image
+        if base.startswith(DOCKERFILE_PATH_PREFIXES):
+            base = f'vibedom-base-{self.container_name}:latest'
+            self.build_dockerfile_image(self.base_image, base)
         tag = f'vibedom-project-{self.container_name}:latest'
-        self.build_project_image(self.base_image, tag)
+        self.build_project_image(base, tag)
         return tag
+
+    def build_dockerfile_image(self, path: str, tag: str) -> None:
+        """Build a project's own Dockerfile as the base for the vibedom layer.
+
+        ``path`` (from ``base_image:``) is resolved against the workspace, where
+        vibedom.yml lives. A directory builds ``<dir>/Dockerfile`` with the
+        directory as context; a file builds that file with its parent as context.
+
+        Example:
+            vm.build_dockerfile_image('./docker', 'vibedom-base-vibedom-myapp:latest')
+        """
+        resolved = (self.workspace / Path(path).expanduser()).resolve()
+        if resolved.is_dir():
+            context, dockerfile = resolved, resolved / 'Dockerfile'
+        else:
+            context, dockerfile = resolved.parent, resolved
+        if not dockerfile.is_file():
+            raise RuntimeError(
+                f"base_image Dockerfile not found: {dockerfile} (from base_image: {path})"
+            )
+        subprocess.run(
+            [self.runtime_cmd, 'build', '-t', tag,
+             '-f', str(dockerfile), str(context)],
+            check=True
+        )
 
     def build_project_image(self, base_image: str, tag: str) -> None:
         """Build vibedom layer on top of a project base image."""

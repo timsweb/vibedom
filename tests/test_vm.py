@@ -870,3 +870,108 @@ def test_vm_is_running_apple_v14_status_object(tmp_path):
         assert vm.is_running() is False
         mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_LEGACY)
         assert vm.is_running() is True
+
+
+def _build_vm(workspace, config_dir, base_image):
+    with patch('shutil.which', return_value='/usr/bin/docker'):
+        return VMManager(workspace, config_dir, runtime='docker',
+                         base_image=base_image, mounts=[_mount(workspace)])
+
+
+def _build_calls(mock_run):
+    return [c.args[0] for c in mock_run.call_args_list if c.args[0][1] == 'build']
+
+
+def test_image_name_builds_dockerfile_dir_then_layer(test_workspace, test_config):
+    """A ./dir base_image builds <dir>/Dockerfile, then the vibedom layer FROM it."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    docker_dir = test_workspace / 'docker'
+    docker_dir.mkdir()
+    (docker_dir / 'Dockerfile').write_text('FROM debian:bookworm\n')
+    vm = _build_vm(test_workspace, test_config, './docker')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run:
+        image = vm._image_name()
+
+    base_tag = 'vibedom-base-vibedom-workspace:latest'
+    base_build, layer_build = _build_calls(mock_run)
+    assert base_build == ['docker', 'build', '-t', base_tag,
+                          '-f', str(docker_dir / 'Dockerfile'), str(docker_dir)]
+    assert f'BASE_IMAGE={base_tag}' in layer_build
+    assert image == 'vibedom-project-vibedom-workspace:latest'
+
+
+def test_image_name_dockerfile_file_uses_parent_as_context(test_workspace, test_config):
+    """A path to a file builds that file with its parent directory as context."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    dockerfile = test_workspace / 'dev.Dockerfile'
+    dockerfile.write_text('FROM alpine\n')
+    vm = _build_vm(test_workspace, test_config, './dev.Dockerfile')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run:
+        vm._image_name()
+
+    base_build = _build_calls(mock_run)[0]
+    assert base_build[-3:] == ['-f', str(dockerfile), str(test_workspace)]
+
+
+def test_image_name_relative_path_resolves_against_workspace(test_workspace, test_config, monkeypatch, tmp_path):
+    """Relative paths resolve against the vibedom.yml folder, not the cwd."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    (test_workspace / 'Dockerfile').write_text('FROM alpine\n')
+    monkeypatch.chdir(tmp_path)
+    vm = _build_vm(test_workspace, test_config, './')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run:
+        vm._image_name()
+
+    assert _build_calls(mock_run)[0][-1] == str(test_workspace)
+
+
+def test_image_name_expands_home_in_dockerfile_path(test_workspace, test_config, monkeypatch):
+    """A ~ path is expanded to the user's home directory."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    monkeypatch.setenv('HOME', str(test_workspace))
+    (test_workspace / 'Dockerfile').write_text('FROM alpine\n')
+    vm = _build_vm(test_workspace, test_config, '~/Dockerfile')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run:
+        vm._image_name()
+
+    assert _build_calls(mock_run)[0][-3:] == [
+        '-f', str(test_workspace / 'Dockerfile'), str(test_workspace)]
+
+
+@pytest.mark.parametrize('image', ['php:8.3', 'library/php:8', 'ghcr.io/org/app:dev'])
+def test_image_name_image_reference_skips_dockerfile_build(test_workspace, test_config, image):
+    """Image references (even with '/') are used directly as the layer's FROM."""
+    vm = _build_vm(test_workspace, test_config, image)
+
+    with patch('vibedom.vm.subprocess.run') as mock_run:
+        vm._image_name()
+
+    (layer_build,) = _build_calls(mock_run)
+    assert f'BASE_IMAGE={image}' in layer_build
+
+
+def test_image_name_missing_dockerfile_path_raises(test_workspace, test_config):
+    """A path that doesn't exist fails with the resolved path in the message."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    vm = _build_vm(test_workspace, test_config, './nope')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run, \
+            pytest.raises(RuntimeError, match=str(test_workspace / 'nope')):
+        vm._image_name()
+    mock_run.assert_not_called()
+
+
+def test_image_name_dir_without_dockerfile_raises(test_workspace, test_config):
+    """A directory with no Dockerfile fails, naming the expected file."""
+    test_workspace = test_workspace.resolve()  # macOS /var -> /private/var
+    (test_workspace / 'docker').mkdir()
+    vm = _build_vm(test_workspace, test_config, './docker')
+
+    with patch('vibedom.vm.subprocess.run') as mock_run, \
+            pytest.raises(RuntimeError, match=str(test_workspace / 'docker' / 'Dockerfile')):
+        vm._image_name()
+    mock_run.assert_not_called()
