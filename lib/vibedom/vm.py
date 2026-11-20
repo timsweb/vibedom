@@ -11,6 +11,10 @@ from typing import Optional
 
 from vibedom.proxy import ProxyManager
 
+# vmnet's default gateway (192.168.64.0/24). Used on macOS 15, where apple/container
+# has no `container network` command to look it up.
+APPLE_DEFAULT_GATEWAY = '192.168.64.1'
+
 
 def parse_apple_inspect_status(stdout: str) -> Optional[str]:
     """Extract the runtime state string from ``container inspect`` JSON output.
@@ -257,13 +261,24 @@ class VMManager:
 
         apple/container doesn't support --add-host and doesn't inject host.docker.internal,
         so we resolve the host via the default network gateway.
+
+        macOS 15 has no `container network` command (apple/container only registers it on
+        macOS 26), so there we fall back to vmnet's documented default gateway.
+
+        Example:
+            >>> vm._apple_host_ip()
+            '192.168.64.1'
         """
         result = subprocess.run(
             ['container', 'network', 'inspect', 'default'],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True,
         )
-        networks = json.loads(result.stdout)
-        return networks[0]['status']['ipv4Gateway']
+        if result.returncode == 0:
+            try:
+                return json.loads(result.stdout)[0]['status']['ipv4Gateway']
+            except (json.JSONDecodeError, LookupError, TypeError):
+                pass
+        return APPLE_DEFAULT_GATEWAY
 
     def exists(self) -> bool:
         """Check whether the container exists (running or stopped)."""

@@ -870,3 +870,35 @@ def test_vm_is_running_apple_v14_status_object(tmp_path):
         assert vm.is_running() is False
         mock_run.return_value = MagicMock(returncode=0, stdout=APPLE_INSPECT_LEGACY)
         assert vm.is_running() is True
+
+
+# --- apple/container host IP resolution ---
+
+def _apple_vm(tmp_path):
+    workspace = tmp_path / 'myapp'
+    workspace.mkdir()
+    with patch('shutil.which', return_value='/usr/local/bin/container'):
+        return VMManager(workspace, tmp_path / 'config', runtime='apple', mounts=[_mount(workspace)])
+
+
+def test_apple_host_ip_reads_default_network_gateway(tmp_path):
+    """On macOS 26, the gateway comes from `container network inspect default`."""
+    vm = _apple_vm(tmp_path)
+    inspect_json = '[{"status": {"ipv4Gateway": "192.168.65.1"}}]'
+    with patch('subprocess.run', return_value=MagicMock(returncode=0, stdout=inspect_json)) as mock_run:
+        assert vm._apple_host_ip() == '192.168.65.1'
+    assert mock_run.call_args[0][0] == ['container', 'network', 'inspect', 'default']
+
+
+def test_apple_host_ip_falls_back_when_network_command_missing(tmp_path):
+    """On macOS 15 there is no `container network` command; use vmnet's default gateway."""
+    vm = _apple_vm(tmp_path)
+    with patch('subprocess.run', return_value=MagicMock(returncode=64, stdout='', stderr='Error: unknown subcommand')):
+        assert vm._apple_host_ip() == '192.168.64.1'
+
+
+def test_apple_host_ip_falls_back_on_unexpected_output(tmp_path):
+    """Unparseable inspect output should fall back rather than crash `vibedom up`."""
+    vm = _apple_vm(tmp_path)
+    with patch('subprocess.run', return_value=MagicMock(returncode=0, stdout='[]')):
+        assert vm._apple_host_ip() == '192.168.64.1'
