@@ -162,3 +162,19 @@ def test_mounts_mapping_missing_path_raises(tmp_path):
     (tmp_path / 'vibedom.yml').write_text('mounts:\n  - as: oops\n')
     with pytest.raises(ValueError, match="missing 'path'"):
         ProjectConfig.load(tmp_path)
+
+
+def test_project_config_loads_yaml_extension(tmp_path):
+    """vibedom.yaml is accepted as well as vibedom.yml."""
+    (tmp_path / 'vibedom.yaml').write_text('base_image: myimage:latest\n')
+    config = ProjectConfig.load(tmp_path)
+    assert config is not None
+    assert config.base_image == 'myimage:latest'
+
+
+def test_project_config_rejects_both_extensions(tmp_path):
+    """Having both vibedom.yml and vibedom.yaml is ambiguous: refuse, naming both."""
+    (tmp_path / 'vibedom.yml').write_text('base_image: a:latest\n')
+    (tmp_path / 'vibedom.yaml').write_text('base_image: b:latest\n')
+    with pytest.raises(ValueError, match=r'vibedom\.yml.*vibedom\.yaml'):
+        ProjectConfig.load(tmp_path)

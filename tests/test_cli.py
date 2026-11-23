@@ -605,3 +605,36 @@ def test_list_is_an_alias_of_status(tmp_path):
     assert listed.exit_code == 0, listed.output
     assert listed.output == status.output
     assert 'vibedom-myapp' in listed.output
+
+
+def test_init_does_not_build_image(tmp_path):
+    """init only creates the deploy key and whitelist. The image is built lazily by
+    `up` (vibedom-alpine, or the project layer when vibedom.yml sets base_image)."""
+    home = tmp_path / 'home'
+    with patch('vibedom.cli.Path.home', return_value=home):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            result = CliRunner().invoke(main, ['init'], catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    assert (home / '.vibedom' / 'keys' / 'id_ed25519_vibedom').exists()
+    assert (home / '.vibedom' / 'trusted_domains.txt').exists()
+    mock_vm_cls.build_image.assert_not_called()
+    mock_vm_cls._detect_runtime.assert_not_called()
+
+
+def test_up_reports_bad_config_without_traceback(tmp_path):
+    """A config error (here: both vibedom.yml and vibedom.yaml) is a clean error."""
+    proj = tmp_path / 'agent'
+    proj.mkdir()
+    (proj / 'vibedom.yml').write_text('base_image: a:latest\n')
+    (proj / 'vibedom.yaml').write_text('base_image: b:latest\n')
+
+    with patch('vibedom.cli.Path.home', return_value=tmp_path / 'home'):
+        with patch('vibedom.cli.VMManager') as mock_vm_cls:
+            mock_vm_cls._detect_runtime.return_value = ('docker', 'docker')
+            result = CliRunner().invoke(main, ['up', str(proj)])
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, ValueError)
+    assert 'vibedom.yml and vibedom.yaml' in result.output
+    mock_vm_cls.assert_not_called()
