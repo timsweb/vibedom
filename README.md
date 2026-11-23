@@ -28,7 +28,7 @@ uv tool install git+https://github.com/timsweb/vibedom.git
 ## Quick Start
 
 ```bash
-# Initialize (once per machine — generates SSH key, builds container image)
+# Initialize (once per machine — generates SSH key and network whitelist)
 vibedom init
 
 # Create a container with ~/projects/myapp mounted at /work/myapp

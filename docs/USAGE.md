@@ -41,7 +41,8 @@ vibedom init
 This will:
 1. Generate an SSH deploy key at `~/.vibedom/keys/id_ed25519_vibedom`
 2. Create a default network whitelist at `~/.vibedom/trusted_domains.txt`
-3. Build the container image (requires Docker or apple/container)
+
+It does not build a container image. The first `vibedom up` builds what the project needs: the default Alpine image, or a vibedom layer on your `base_image:` if `vibedom.yml` sets one. A Docker or apple/container runtime is only needed from that point.
 
 Add the displayed public key to your GitLab account under **Settings → SSH Keys**. This lets the agent push and fetch your private repositories over SSH.
 
@@ -109,7 +110,7 @@ vibedom up ~/projects/myapp
 
 ### Project Setup (vibedom.yml)
 
-Add `vibedom.yml` to your project root to configure the container:
+Add `vibedom.yml` (or `vibedom.yaml`; not both) to your project root to configure the container:
 
 ```yaml
 base_image: wapi-php-fpm:latest   # use your project's image instead of Alpine
@@ -323,10 +324,10 @@ container list
 container logs vibedom-myapp
 ```
 
-Rebuild the image:
+Recreate the container, which rebuilds the image (the default image, or the layer on your `base_image:`):
 
 ```bash
-vibedom init
+vibedom up myapp --recreate
 ```
 
 ### Container shows wrong status after reboot (apple/container)

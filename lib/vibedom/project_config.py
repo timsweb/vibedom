@@ -12,6 +12,9 @@ KNOWN_FIELDS = {
     'memory', 'env', 'mounts',
 }
 
+# Accepted project config filenames, in lookup order.
+CONFIG_FILENAMES = ('vibedom.yml', 'vibedom.yaml')
+
 # Fields from removed features. Present in old vibedom.yml files; warn, don't fail.
 OBSOLETE_FIELDS = {'sync_exclude'}
 
@@ -78,10 +81,19 @@ class ProjectConfig:
 
     @classmethod
     def load(cls, workspace: Path) -> Optional['ProjectConfig']:
-        """Load vibedom.yml from workspace root. Returns None if not present."""
-        config_file = workspace / 'vibedom.yml'
-        if not config_file.exists():
+        """Load vibedom.yml (or vibedom.yaml) from workspace root.
+
+        Returns None if neither is present; raises ValueError if both are.
+        """
+        found = [workspace / n for n in CONFIG_FILENAMES if (workspace / n).exists()]
+        if not found:
             return None
+        if len(found) > 1:
+            raise ValueError(
+                f"Both {' and '.join(f.name for f in found)} exist in {workspace} — "
+                f"keep one"
+            )
+        config_file = found[0]
 
         with open(config_file, encoding='utf-8') as f:
             data = yaml.safe_load(f) or {}

@@ -72,7 +72,7 @@
 ### Persistent Container Workflow (Primary)
 
 **Setup (once per project):**
-- Optional `vibedom.yml` with `base_image`, `network`, `host_aliases`, `setup` commands, `memory`, `env`, `mounts`
+- Optional `vibedom.yml` (or `vibedom.yaml`; both present is an error) with `base_image`, `network`, `host_aliases`, `setup` commands, `memory`, `env`, `mounts`
 - `vibedom up ~/projects/myapp` — creates container with `~/projects/myapp` at `/work/myapp`, runs setup commands
 
 **Iterative development:**
@@ -184,10 +184,10 @@ pytest tests/ --cov=lib/vibedom --cov-report=html
 ### Manual Testing
 
 ```bash
-# Build VM image
-vibedom init  # builds image on first run
+# First-time setup (deploy key + whitelist; no image build)
+vibedom init
 
-# Container workflow
+# Container workflow (first up builds the image)
 vibedom up ~/projects/test-workspace
 vibedom status
 vibedom shell test-workspace              # lands in /work/test-workspace
@@ -243,8 +243,8 @@ pip install -e .
 # Run tests
 pytest tests/ -v
 
-# Build VM image
-vibedom init  # builds image on first run
+# Rebuild the image for a container
+vibedom up myapp --recreate
 
 # Check code style
 ruff check lib/ tests/

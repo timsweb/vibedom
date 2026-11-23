@@ -27,11 +27,13 @@ def main():
     pass
 
 @main.command()
-@click.option('--runtime', '-r', type=click.Choice(['auto', 'docker', 'apple'],
-              case_sensitive=False), default='auto',
-              help='Container runtime to use for building the image (default: auto-detect)')
-def init(runtime: str):
-    """Initialize vibedom (first-time setup)."""
+def init():
+    """Initialize vibedom (first-time setup): deploy key and network whitelist.
+
+    Does not build a container image. `vibedom up` builds what the project needs on
+    first use: the default vibedom-alpine image, or a layer on the `base_image:`
+    from vibedom.yml.
+    """
     click.echo("🔧 Initializing vibedom...")
 
     # Create config directory
@@ -63,23 +65,8 @@ def init(runtime: str):
     click.echo(f"✓ Whitelist created at {whitelist_path}")
     click.echo("  Edit this file to add your internal domains")
 
-    # Build VM image
-    click.echo("\nBuilding VM image (this may take a few minutes on first run)...")
-    try:
-        rt = None if runtime == 'auto' else runtime
-        _, runtime_cmd = VMManager._detect_runtime(rt)
-        if VMManager.image_is_current(runtime_cmd):
-            click.echo("✓ VM image already up to date")
-        else:
-            if VMManager.image_exists(runtime_cmd):
-                click.echo("Existing VM image is stale (Dockerfile changed) — rebuilding...")
-            VMManager.build_image(rt)
-            click.echo("✓ VM image built successfully")
-    except RuntimeError as e:
-        click.secho(f"⚠️  Could not build VM image: {e}", fg='yellow')
-        click.echo("  Run 'vibedom build' manually once a container runtime is installed")
-
     click.echo("\n✅ Initialization complete!")
+    click.echo("   The container image is built on your first 'vibedom up'.")
 
 @main.command('reload-whitelist')
 def reload_whitelist() -> None:
@@ -360,8 +347,12 @@ def up(workspace, runtime, recreate):
         click.secho(f"Error: {e}", fg='red')
         sys.exit(1)
 
-    project_config = ProjectConfig.load(workspace_path)
-    mounts = _resolve_mounts(workspace_path, project_config)
+    try:
+        project_config = ProjectConfig.load(workspace_path)
+        mounts = _resolve_mounts(workspace_path, project_config)
+    except (ValueError, yaml.YAMLError) as e:
+        click.secho(f"Error: invalid project config: {e}", fg='red')
+        sys.exit(1)
     for m in mounts:
         if not m.host_path.is_dir():
             click.secho(f"Error: mount path is not a directory: {m.host_path}", fg='red')
